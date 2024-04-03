@@ -52,6 +52,7 @@ int main(int const argc, char const *argv[])
     unsigned nfibers = 256;
     bool no_compaction = false;
     unsigned sq_thread_cpu = static_cast<unsigned>(get_nprocs() - 1);
+    std::optional<size_t> lru_size = std::nullopt;
     std::vector<std::filesystem::path> dbname_paths;
     std::filesystem::path load_snapshot{};
     std::filesystem::path dump_snapshot{};
@@ -80,7 +81,7 @@ int main(int const argc, char const *argv[])
         sq_thread_cpu,
         "sq_thread_cpu field in io_uring_params, to specify the cpu set "
         "kernel poll thread is bound to in SQPOLL mode");
-    cli.add_option(
+    auto db_opt = cli.add_option(
         "--db",
         dbname_paths,
         "A comma-separated list of previously created database paths. You can "
@@ -92,6 +93,8 @@ int main(int const argc, char const *argv[])
         "--dump_snapshot",
         dump_snapshot,
         "directory to dump state to at the end of run");
+    cli.add_option("--lru_size", lru_size, "enable triedb node lru cache")
+        ->needs(db_opt); // only allowed if running on disk
 
     try {
         cli.parse(argc, argv);
@@ -126,6 +129,7 @@ int main(int const argc, char const *argv[])
                   .wr_buffers = 32,
                   .uring_entries = 128,
                   .sq_thread_cpu = sq_thread_cpu,
+                  .lru_size = lru_size,
                   .compact_config =
                       no_compaction ? std::nullopt
                                     : std::make_optional<mpt::CompactConfig>(

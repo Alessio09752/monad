@@ -274,6 +274,7 @@ int main(int argc, char *argv[])
     uint64_t block_id = uint64_t(-1);
     unsigned random_read_benchmark_threads = 0;
     unsigned concurrent_read_io_limit = 0;
+    bool use_lru = false;
 
     struct runtime_reconfig_t
     {
@@ -298,7 +299,7 @@ int main(int argc, char *argv[])
         cli.add_option("-n", n_slices, "n batch updates");
         cli.add_option("--kcpu", sq_thread_cpu, "io_uring sq_thread_cpu");
         cli.add_flag("--erase", erase, "test erase");
-        cli.add_flag(
+        auto in_memory_opt = cli.add_flag(
             "--in-memory", in_memory, "config trie to in memory or on-disk");
         cli.add_flag(
             "--empty-cpu-caches",
@@ -333,6 +334,8 @@ int main(int argc, char *argv[])
             "--runtime-reconfig-file",
             runtime_reconfig.path,
             "a file to parse every five seconds to adjust config as test runs");
+        cli.add_flag("--use-lru", use_lru, "enable triedb node lru cache")
+            ->excludes(in_memory_opt);
         cli.parse(argc, argv);
 
         MONAD_ASSERT(in_memory + append < 2);
@@ -493,8 +496,13 @@ int main(int argc, char *argv[])
             };
 
             UpdateAux<> aux{};
+            std::unique_ptr<LruList> lru_list;
             monad::test::StateMachineWithBlockNo sm{};
             if (!in_memory) {
+                if (use_lru) {
+                    lru_list = std::make_unique<LruList>(1000000);
+                }
+                aux.lru_list = lru_list.get();
                 aux.set_io(&io, monad_trie_test_compact_config);
             }
 
@@ -606,7 +614,9 @@ int main(int argc, char *argv[])
                 csv_writer << "\n\"Total storage consumed:\"," << bytes_used
                            << std::endl;
             }
-        } /* upsert test end */
+            root.reset();
+            // has to reset trie root before lru_list
+        }
 
         if (random_read_benchmark_threads > 0) {
             {

@@ -49,10 +49,11 @@ size_t Node::get_deallocate_count(Node *node)
 Node::Node(prevent_public_construction_tag) {}
 
 Node::Node(
-    prevent_public_construction_tag, uint16_t const mask,
+    prevent_public_construction_tag, LruList *list, uint16_t const mask,
     std::optional<byte_string_view> value, size_t const data_size,
     NibblesView const path, int64_t const version)
-    : mask(mask)
+    : list(list)
+    , mask(mask)
     , path_nibble_index_end(path.end_nibble_)
     , value_len(static_cast<decltype(value_len)>(
           value.transform(&byte_string_view::size).value_or(0)))
@@ -81,11 +82,11 @@ Node::Node(
 Node::~Node()
 {
     for (uint8_t index = 0; index < number_of_children(); ++index) {
-        {
-            UniquePtr const _{next(index)};
-            (void)_;
-        }
-        set_next(index, nullptr);
+        next_ptr(index).reset();
+    }
+    if (this->is_in_list()) {
+        MONAD_DEBUG_ASSERT(list != nullptr);
+        list->remove(this);
     }
 #ifdef MONAD_MPT_NODE_COUNTER
     bytes_allocated -= this->get_mem_size();
@@ -353,6 +354,9 @@ Node::UniquePtr Node::next_ptr(unsigned const index) noexcept
 {
     Node *p = next(index);
     set_next(index, nullptr);
+    if (p && p->is_in_list()) {
+        p->addr_to_reset = nullptr;
+    }
     return UniquePtr{p};
 }
 
@@ -368,8 +372,8 @@ unsigned Node::get_mem_size() const noexcept
 uint32_t Node::get_disk_size() const noexcept
 {
     MONAD_DEBUG_ASSERT(next_data() >= (unsigned char *)this);
-    auto const node_disk_size =
-        static_cast<uint32_t>(next_data() - (unsigned char *)this);
+    auto const node_disk_size = static_cast<uint32_t>(
+        next_data() - (unsigned char *)this - node_disk_storage_offset());
     uint32_t const total_disk_size = node_disk_size + Node::disk_size_bytes;
     MONAD_DEBUG_ASSERT(total_disk_size <= Node::max_disk_size);
     return total_disk_size;
@@ -400,6 +404,9 @@ void ChildData::copy_old_child(Node *const old, unsigned const i)
     auto const index = old->to_child_index(i);
     if (old->next(index)) { // in memory, infers cached
         ptr = old->next_ptr(index).release();
+        if (ptr->is_in_list()) {
+            ptr->addr_to_reset = &ptr;
+        }
     }
     auto const old_data = old->child_data_view(index);
     memcpy(&data, old_data.data(), old_data.size());
@@ -417,7 +424,8 @@ void ChildData::copy_old_child(Node *const old, unsigned const i)
 
 Node::UniquePtr make_node(
     Node &from, NibblesView const path,
-    std::optional<byte_string_view> const value, int64_t const version)
+    std::optional<byte_string_view> const value, int64_t const version,
+    bool cached_by_state_machine)
 {
     auto const value_size =
         value.transform(&byte_string_view::size).value_or(0);
@@ -428,6 +436,7 @@ Node::UniquePtr make_node(
             value_size,
             path.data_size(),
             from.data().size()),
+        from.list,
         from.mask,
         value,
         from.data().size(),
@@ -453,13 +462,30 @@ Node::UniquePtr make_node(
         std::memset(from.next_data(), 0, next_size);
     }
 
+    if (node->list) {
+        for (unsigned index = 0; index < node->number_of_children(); ++index) {
+            auto *const next = node->next(index);
+            if (next && next->is_in_list()) {
+                next->addr_to_reset =
+                    node->next_data() + index * sizeof(Node *);
+            }
+        }
+
+        if (!cached_by_state_machine) {
+            node->addr_to_reset = (void *)
+                LruList::INVALID_RESET_ADDR; // invalid offset, trigger
+                                             // assertion when reset this addr
+            node->list->update(node.get());
+        }
+    }
     return node;
 }
 
 Node::UniquePtr make_node(
     uint16_t const mask, std::span<ChildData> const children,
     NibblesView const path, std::optional<byte_string_view> const value,
-    size_t const data_size, int64_t const version)
+    size_t const data_size, int64_t const version, LruList *lru_list,
+    bool cached_by_state_machine)
 {
     MONAD_DEBUG_ASSERT(data_size <= KECCAK256_SIZE);
     if (value.has_value()) {
@@ -491,6 +517,7 @@ Node::UniquePtr make_node(
             value.transform(&byte_string_view::size).value_or(0),
             path.data_size(),
             data_size),
+        lru_list,
         mask,
         value,
         data_size,
@@ -502,26 +529,46 @@ Node::UniquePtr make_node(
         child_data_offsets.size() * sizeof(uint16_t),
         node->child_off_data());
 
-    for (unsigned index = 0; auto const &child : children) {
+    for (uint8_t index = 0; auto const &child : children) {
         if (child.is_valid()) {
             node->set_fnext(index, child.offset);
             node->set_min_offset_fast(index, child.min_offset_fast);
             node->set_min_offset_slow(index, child.min_offset_slow);
             node->set_next(index, child.ptr);
+            if (child.ptr && child.ptr->is_in_list()) {
+                MONAD_DEBUG_ASSERT(node->list != nullptr);
+                child.ptr->addr_to_reset =
+                    node->next_data() + index * sizeof(Node *);
+            }
             node->set_child_data(index, {child.data, child.len});
             ++index;
         }
     }
 
+    if (node->list && !cached_by_state_machine) {
+        node->list->update(node.get());
+        node->addr_to_reset = (void *)
+            LruList::INVALID_RESET_ADDR; // invalid offset, trigger assertion
+                                         // when reset this addr
+    }
     return node;
 }
 
 Node::UniquePtr make_node(
     uint16_t const mask, std::span<ChildData> const children,
     NibblesView const path, std::optional<byte_string_view> const value,
-    byte_string_view const data, int64_t const version)
+    byte_string_view const data, int64_t const version, LruList *lru_list,
+    bool cached_by_state_machine)
 {
-    auto node = make_node(mask, children, path, value, data.size(), version);
+    auto node = make_node(
+        mask,
+        children,
+        path,
+        value,
+        data.size(),
+        version,
+        lru_list,
+        cached_by_state_machine);
     std::copy_n(data.data(), data.size(), node->data_data());
     return node;
 }
@@ -531,11 +578,19 @@ Node::UniquePtr make_node(
 Node *create_node_with_children(
     Compute &comp, uint16_t const mask, std::span<ChildData> children,
     NibblesView const path, std::optional<byte_string_view> const value,
-    int64_t const version)
+    int64_t const version, LruList *lru_list, bool cached_by_state_machine)
 {
     MONAD_ASSERT(mask);
     auto const data_size = comp.compute_len(children, mask, path, value);
-    auto node = make_node(mask, children, path, value, data_size, version);
+    auto node = make_node(
+        mask,
+        children,
+        path,
+        value,
+        data_size,
+        version,
+        lru_list,
+        cached_by_state_machine);
     MONAD_DEBUG_ASSERT(node);
     if (data_size) {
         comp.compute_branch(node->data_data(), node.get());
@@ -564,7 +619,8 @@ void serialize_node_to_buffer(
                                                 : 0;
         memcpy(
             write_pos,
-            (unsigned char *)&node + offset_within_node,
+            (unsigned char *)&node + node_disk_storage_offset() +
+                offset_within_node,
             bytes_to_append);
     }
 }
@@ -583,13 +639,13 @@ deserialize_node_from_buffer(unsigned char const *read_pos, size_t max_bytes)
     // Load the on disk node
     auto const mask = unaligned_load<uint16_t>(read_pos);
     auto const number_of_children = static_cast<unsigned>(std::popcount(mask));
-    auto const alloc_size =
-        static_cast<uint32_t>(disk_size + number_of_children * sizeof(Node *));
+    auto const alloc_size = static_cast<uint32_t>(
+        disk_size + node_disk_mem_size_diff(number_of_children));
     auto node = Node::make(alloc_size);
     std::copy_n(
         read_pos,
         disk_size - Node::disk_size_bytes,
-        (unsigned char *)node.get());
+        (unsigned char *)node.get() + node_disk_storage_offset());
     std::memset(node->next_data(), 0, number_of_children * sizeof(Node *));
     return node;
 }

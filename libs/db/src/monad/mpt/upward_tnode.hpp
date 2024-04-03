@@ -123,6 +123,7 @@ struct CompactTNode
                     disk (either in write buffer or inflight for write), thus
                     `cached` value is either the node is currently cached in
                     memory or its node is child of an update tnode. */
+                 /* Update: cache by state machine */
                  currently_cached || parent->type == tnode_type::update)
         , node(node)
     {
@@ -131,7 +132,21 @@ struct CompactTNode
     ~CompactTNode()
     {
         MONAD_DEBUG_ASSERT(npending == 0);
-        if (!cached) {
+        if (!cached && node->list) {
+            MONAD_DEBUG_ASSERT(node->temp_not_deallocate == true);
+            if (node->is_in_list()) {
+                MONAD_DEBUG_ASSERT(
+                    node->addr_to_reset != nullptr &&
+                    (uintptr_t)node->addr_to_reset !=
+                        LruList::INVALID_RESET_ADDR);
+            }
+            else {
+                MONAD_DEBUG_ASSERT(node->addr_to_reset == nullptr);
+            }
+        }
+        node->temp_not_deallocate = false;
+        if (!cached && !node->is_in_list()) { // not cached by state machine,
+                                              // also not cached by lru
             Node::UniquePtr{node};
         }
     }

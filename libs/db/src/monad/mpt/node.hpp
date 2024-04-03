@@ -102,6 +102,8 @@ We store node data to its parent's storage to avoid an extra read of child node
 to retrieve child data.
 */
 
+class LruList;
+
 class Node
 {
     struct prevent_public_construction_tag
@@ -132,6 +134,15 @@ public:
                   std::allocator<Node>, BytesAllocator, &Node::pool,
                   &Node::get_deallocate_count>>;
 
+public:
+    Node *prev{nullptr};
+    Node *after{nullptr};
+    LruList *list{nullptr};
+    void *addr_to_reset{nullptr};
+    bool temp_not_deallocate{false};
+    unsigned char pad[7];
+
+    /* Here starts on disk storage*/
     /* 16-bit mask for children */
     uint16_t mask{0};
 
@@ -201,8 +212,9 @@ public:
     }
 
     Node(prevent_public_construction_tag);
+    // or use std::optional<LruList>
     Node(
-        prevent_public_construction_tag, uint16_t mask,
+        prevent_public_construction_tag, LruList *list, uint16_t mask,
         std::optional<byte_string_view> value, size_t data_size,
         NibblesView path, int64_t version);
     Node(Node const &) = delete;
@@ -277,16 +289,33 @@ public:
     //! node size in memory
     unsigned get_mem_size() const noexcept;
     uint32_t get_disk_size() const noexcept;
+
+    bool is_in_list() const
+    {
+        return prev != nullptr || after != nullptr;
+    }
 };
 
 static_assert(std::is_standard_layout_v<Node>, "required by offsetof");
-static_assert(sizeof(Node) == 16);
+static_assert(sizeof(Node) == 56);
 static_assert(alignof(Node) == 8);
 
 #ifdef MONAD_MPT_NODE_COUNTER
 inline uint64_t Node::num_nodes = 0;
 inline uint64_t Node::bytes_allocated = 0;
 #endif
+
+constexpr unsigned node_disk_mem_size_diff(unsigned number_of_children)
+{
+    return offsetof(Node, mask) +
+           (unsigned)sizeof(Node *) * number_of_children -
+           Node::disk_size_bytes;
+}
+
+constexpr unsigned node_disk_storage_offset()
+{
+    return offsetof(Node, mask);
+}
 
 // ChildData is for temporarily holding a child's info, including child ptr,
 // file offset and hash data, in the update recursion.
@@ -329,21 +358,24 @@ constexpr size_t calculate_node_size(
 
 Node::UniquePtr make_node(
     Node &from, NibblesView path, std::optional<byte_string_view> value,
-    int64_t version);
+    int64_t version, bool cached_by_state_machine = true);
 
 Node::UniquePtr make_node(
     uint16_t mask, std::span<ChildData>, NibblesView path,
-    std::optional<byte_string_view> value, size_t data_size, int64_t version);
+    std::optional<byte_string_view> value, size_t data_size, int64_t version,
+    LruList *lru_list = nullptr, bool cached_by_state_machine = true);
 
 Node::UniquePtr make_node(
     uint16_t mask, std::span<ChildData>, NibblesView path,
     std::optional<byte_string_view> value, byte_string_view data,
-    int64_t version);
+    int64_t version, LruList *lru_list = nullptr,
+    bool cached_by_state_machine = true);
 
 // create node: either branch/extension, with or without leaf
 Node *create_node_with_children(
     Compute &, uint16_t mask, std::span<ChildData> children, NibblesView path,
-    std::optional<byte_string_view> value, int64_t version);
+    std::optional<byte_string_view> value, int64_t version,
+    LruList *lru_list = nullptr, bool cached_by_state_machine = true);
 
 void serialize_node_to_buffer(
     unsigned char *write_pos, unsigned bytes_to_write, Node const &,
@@ -356,5 +388,97 @@ deserialize_node_from_buffer(unsigned char const *read_pos, size_t max_bytes);
 //! chunk_offset_t spare bits store the num page to read
 Node *read_node_blocking(
     MONAD_ASYNC_NAMESPACE::storage_pool &, chunk_offset_t node_offset);
+
+class LruList
+{
+    size_t max_size_{1000000};
+    size_t size_{0};
+    Node::UniquePtr head_{};
+    Node::UniquePtr tail_{};
+
+    void move_to_front(Node *node)
+    {
+        MONAD_DEBUG_ASSERT(node->is_in_list());
+        unlink(node);
+        push_front(node);
+    }
+
+    void push_front(Node *node)
+    {
+        Node *const head = head_->after;
+        node->prev = head_.get();
+        node->after = head;
+        head->prev = node;
+        head_->after = node;
+        ++size_;
+    }
+
+public:
+    static constexpr uintptr_t INVALID_RESET_ADDR = 0xffffffffffffffff;
+
+    LruList(size_t const max_size)
+        : max_size_{max_size}
+        , head_{make_node(0, {}, {}, std::nullopt, {}, 0)}
+        , tail_{make_node(0, {}, {}, std::nullopt, {}, 0)}
+    {
+        head_->after = tail_.get();
+        tail_->prev = head_.get();
+    }
+
+    ~LruList()
+    {
+        // trie nodes should all be freed before destructing LRU list.
+        MONAD_ASSERT(size_ == 0);
+        head_->after = nullptr;
+        tail_->prev = nullptr;
+    }
+
+    void evict()
+    {
+        MONAD_DEBUG_ASSERT(size_ == max_size_);
+        Node *const target = tail_->prev;
+        remove(target);
+        if (!target->temp_not_deallocate) {
+            Node::UniquePtr{target}.reset();
+        }
+    }
+
+    void remove(Node *const target)
+    {
+        MONAD_DEBUG_ASSERT(target != head_.get());
+        if (target->addr_to_reset) {
+            MONAD_DEBUG_ASSERT(
+                (uintptr_t)target->addr_to_reset != INVALID_RESET_ADDR);
+            memset(target->addr_to_reset, 0, sizeof(Node *));
+            target->addr_to_reset = nullptr;
+        }
+        unlink(target);
+    }
+
+    void unlink(Node *node)
+    {
+        MONAD_ASSERT(size_ > 0);
+        Node *const prev = node->prev;
+        Node *const next = node->after;
+        prev->after = next;
+        next->prev = prev;
+        node->prev = nullptr;
+        node->after = nullptr;
+        --size_;
+    }
+
+    // call update() everytime we access an in memory node or create a trie node
+    void update(Node *node)
+    {
+        if (node->is_in_list()) {
+            move_to_front(node);
+            return;
+        }
+        if (size_ >= max_size_) {
+            evict();
+        }
+        push_front(node);
+    }
+};
 
 MONAD_MPT_NAMESPACE_END

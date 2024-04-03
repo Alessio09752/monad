@@ -336,6 +336,7 @@ struct update_receiver
         MONAD_ASSERT(buffer_);
         Node::UniquePtr old = detail::deserialize_node_from_receiver_result(
             std::move(buffer_), buffer_off, io_state);
+        old->list = aux->lru_list;
         // continue recurse down the trie starting from `old`
         unsigned const old_prefix_index = old->path_start_nibble();
         upsert_(
@@ -424,6 +425,7 @@ struct read_single_child_receiver
         child.ptr = detail::deserialize_node_from_receiver_result(
                         std::move(buffer_), buffer_off, io_state)
                         .release();
+        child.ptr->list = aux->lru_list;
         auto const path_size = tnode->path.nibble_size();
         create_node_compute_data_possibly_async(
             *aux, *sm, *parent, entry, tnode_unique_ptr{tnode}, false);
@@ -528,7 +530,9 @@ Node *create_node_from_children_if_any(
                                            path,
                                            leaf_data.value(),
                                            {},
-                                           aux.current_version)
+                                           aux.current_version,
+                                           aux.lru_list,
+                                           sm.cache())
                                            .release()
                                      : nullptr;
     }
@@ -537,6 +541,8 @@ Node *create_node_from_children_if_any(
             orig_mask, static_cast<unsigned>(std::countr_zero(mask)));
         MONAD_DEBUG_ASSERT(children[j].ptr);
         auto const node = Node::UniquePtr{children[j].ptr};
+        node->addr_to_reset = nullptr;
+        children[j].ptr = nullptr; // reset
         /* Note: there's a potential superfluous extension hash recomputation
         when node coaleases upon erases, because we compute node hash when path
         is not yet the final form. There's not yet a good way to avoid this
@@ -547,7 +553,8 @@ Node *create_node_from_children_if_any(
                    concat(path, children[j].branch, node->path_nibble_view()),
                    node->has_value() ? std::make_optional(node->value())
                                      : std::nullopt,
-                   aux.current_version)
+                   aux.current_version,
+                   sm.cache())
             .release();
     }
     MONAD_DEBUG_ASSERT(
@@ -573,9 +580,10 @@ Node *create_node_from_children_if_any(
                         child.min_offset_slow >= aux.compact_offset_slow);
                 }
             }
-            // apply cache based on state machine state, always cache node that
-            // is a single child
-            if (child.ptr && number_of_children > 1 && !child.cache_node) {
+            // apply level-based cache based on state, always cache node that is
+            // a single child of its parent
+            if (child.ptr && !child.cache_node && !aux.lru_list &&
+                number_of_children > 1) {
                 {
                     Node::UniquePtr const _{child.ptr};
                 }
@@ -584,7 +592,14 @@ Node *create_node_from_children_if_any(
         }
     }
     return create_node_with_children(
-        sm.get_compute(), mask, children, path, leaf_data, aux.current_version);
+        sm.get_compute(),
+        mask,
+        children,
+        path,
+        leaf_data,
+        aux.current_version,
+        aux.lru_list,
+        sm.cache());
 }
 
 void create_node_compute_data_possibly_async(
@@ -692,7 +707,14 @@ void create_new_trie_(
             aux.collect_number_nodes_created_stats();
             entry.finalize(
                 *make_node(
-                     0, {}, path, update.value.value(), {}, aux.current_version)
+                     0,
+                     {},
+                     path,
+                     update.value.value(),
+                     {},
+                     aux.current_version,
+                     aux.lru_list,
+                     sm.cache())
                      .release(),
                 sm.get_compute(),
                 sm.cache());
@@ -775,6 +797,15 @@ void upsert_(
         async_read(aux, std::move(receiver));
         return;
     }
+    if (aux.lru_list) {
+        if (!old->list) {
+            old->list = aux.lru_list;
+        }
+        if (old->is_in_list()) {
+            old->list->unlink(old.get());
+        }
+    }
+    MONAD_DEBUG_ASSERT(!old->is_in_list());
     if (old_prefix_index == INVALID_PATH_INDEX) {
         old_prefix_index = old->path_start_nibble();
         MONAD_DEBUG_ASSERT(old_prefix_index != INVALID_PATH_INDEX);
@@ -873,6 +904,7 @@ void dispatch_updates_impl_(
     std::optional<byte_string_view> const opt_leaf_data)
 {
     Node *old = old_ptr.get();
+    MONAD_DEBUG_ASSERT(!old->is_in_list());
     uint16_t const orig_mask = old->mask | requests.mask;
     auto const number_of_children =
         static_cast<unsigned>(std::popcount(orig_mask));
@@ -894,13 +926,14 @@ void dispatch_updates_impl_(
             children[j] = ChildData{.branch = static_cast<uint8_t>(i)};
             sm.down(children[j].branch);
             if (bit & old->mask) {
+                auto const old_i = old->to_child_index(i);
                 upsert_(
                     aux,
                     sm,
                     *tnode,
                     children[j],
-                    old->next_ptr(old->to_child_index(i)),
-                    old->fnext(old->to_child_index(i)),
+                    old->next_ptr(old_i),
+                    old->fnext(old_i),
                     std::move(requests)[i],
                     prefix_index + 1,
                     INVALID_PATH_INDEX);
@@ -953,6 +986,7 @@ void dispatch_updates_flat_list_(
     ChildData &entry, Node::UniquePtr old, Requests &requests,
     NibblesView const path, unsigned prefix_index)
 {
+    MONAD_DEBUG_ASSERT(!old->is_in_list());
     auto &opt_leaf = requests.opt_leaf;
     auto opt_leaf_data = old->opt_value();
     if (opt_leaf.has_value()) {
@@ -1003,6 +1037,7 @@ void mismatch_handler_(
     unsigned const prefix_index)
 {
     Node &old = *old_ptr;
+    MONAD_DEBUG_ASSERT(!old.is_in_list());
     MONAD_DEBUG_ASSERT(old.has_path());
     // Note: no leaf can be created at an existing non-leaf node
     MONAD_DEBUG_ASSERT(!requests.opt_leaf.has_value());
@@ -1061,7 +1096,11 @@ void mismatch_handler_(
             child = ChildData{.branch = static_cast<uint8_t>(i)};
             child.finalize(
                 *make_node(
-                     old, path_suffix, old.opt_value(), aux.current_version)
+                     old,
+                     path_suffix,
+                     old.opt_value(),
+                     aux.current_version,
+                     sm.cache())
                      .release(),
                 sm.get_compute(),
                 sm.cache());
@@ -1108,6 +1147,8 @@ void compact_(
         async_read(aux, std::move(receiver));
         return;
     }
+    // do not immediately deallocate node if evicted from lru
+    node->temp_not_deallocate = true;
     bool const rewrite_to_fast = [&aux, &node_offset] {
         if (node_offset ==
             INVALID_OFFSET) { // being updated and not yet written
@@ -1118,8 +1159,8 @@ void compact_(
                compact_virtual_chunk_offset_t{virtual_offset} >=
                    aux.compact_offset_fast;
     }();
-    auto tnode =
-        CompactTNode::make(parent, index, node, rewrite_to_fast, cached);
+    auto tnode = CompactTNode::make(
+        parent, index, node, rewrite_to_fast, cached & (!node->is_in_list()));
 
     aux.collect_compacted_nodes_stats(
         copy_node_for_fast_or_slow,
@@ -1175,7 +1216,17 @@ void try_fillin_parent_with_rewritten_node(
     }
     else { // parent tnode is an update tnode
         auto *const p = reinterpret_cast<UpwardTreeNode *>(parent);
-        MONAD_DEBUG_ASSERT(tnode->cached);
+        if (aux.lru_list) {
+            MONAD_DEBUG_ASSERT(tnode->node->temp_not_deallocate);
+            if (tnode->node->is_in_list() &&
+                p->children[index].ptr == tnode->node) {
+                MONAD_DEBUG_ASSERT(
+                    tnode->node->addr_to_reset == &(p->children[index].ptr) ||
+                    // if mismatched, then node is a newly created node
+                    (uintptr_t)tnode->node->addr_to_reset ==
+                        LruList::INVALID_RESET_ADDR);
+            }
+        }
         MONAD_DEBUG_ASSERT(p->children[index].offset == INVALID_OFFSET);
         auto &child = p->children[index];
         child.ptr =

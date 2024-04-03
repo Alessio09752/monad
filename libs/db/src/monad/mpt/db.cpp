@@ -67,6 +67,10 @@ struct Db::Impl
     virtual bool is_latest() const = 0;
     virtual void load_latest_fiber_blocking() = 0;
     virtual size_t prefetch_fiber_blocking(uint64_t latest_block_id) = 0;
+
+    virtual void disable_lru() {}
+
+    virtual void enable_lru() {}
 };
 
 struct Db::ROOnDisk final : public Db::Impl
@@ -399,6 +403,7 @@ struct Db::RWOnDisk final : public Db::Impl
     std::unique_ptr<TrieDbWorker> worker_;
     std::thread worker_thread_;
     StateMachine &machine_;
+    std::unique_ptr<LruList> lru_list_;
     UpdateAux<> aux_;
     Node::UniquePtr root_;
 
@@ -413,6 +418,10 @@ struct Db::RWOnDisk final : public Db::Impl
             worker_.reset();
         })
         , machine_{machine}
+        , lru_list_(
+              options.lru_size.has_value()
+                  ? std::make_unique<LruList>(options.lru_size.value())
+                  : std::unique_ptr<LruList>())
         , aux_{[&] {
             comms_.enqueue({});
             while (comms_.size_approx() > 0) {
@@ -420,7 +429,8 @@ struct Db::RWOnDisk final : public Db::Impl
             }
             std::unique_lock const g(lock_);
             MONAD_ASSERT(worker_);
-            return UpdateAux<>{&worker_->io, options.compact_config};
+            return UpdateAux<>{
+                &worker_->io, lru_list_.get(), options.compact_config};
         }()}
         , root_(
               aux_.get_root_offset() != INVALID_OFFSET
@@ -428,6 +438,16 @@ struct Db::RWOnDisk final : public Db::Impl
                         worker_->pool, aux_.get_root_offset())}
                   : Node::UniquePtr{})
     {
+    }
+
+    virtual void disable_lru() override
+    {
+        aux_.lru_list = nullptr;
+    }
+
+    virtual void enable_lru() override
+    {
+        aux_.lru_list = lru_list_.get();
     }
 
     ~RWOnDisk()
@@ -441,6 +461,9 @@ struct Db::RWOnDisk final : public Db::Impl
             cond_.notify_one();
         }
         worker_thread_.join();
+        // trie root_ must be destroyed before lru list
+        root_.reset();
+        lru_list_.reset();
     }
 
     virtual Node::UniquePtr &root() override
@@ -662,6 +685,16 @@ size_t Db::prefetch()
         impl_->prefetch_fiber_blocking(latest_block_id.value());
     impl_->prefetch_running_ = false;
     return nodes_loaded;
+}
+
+void Db::disable_lru()
+{
+    impl_->disable_lru();
+}
+
+void Db::enable_lru()
+{
+    impl_->enable_lru();
 }
 
 MONAD_MPT_NAMESPACE_END

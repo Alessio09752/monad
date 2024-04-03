@@ -339,11 +339,14 @@ public:
     node_writer_unique_ptr_type node_writer_fast{};
     node_writer_unique_ptr_type node_writer_slow{};
 
+    LruList *lru_list{nullptr};
+
     UpdateAuxImpl(
-        MONAD_ASYNC_NAMESPACE::AsyncIO *io_ = nullptr,
+        MONAD_ASYNC_NAMESPACE::AsyncIO *io_ = nullptr, LruList *list = nullptr,
         std::optional<CompactConfig> compact_config = std::nullopt)
     {
-        if (io_) {
+        if (io_) { // on disk
+            lru_list = list;
             set_io(io_, compact_config);
             // reset offsets
             auto const &db_offsets = db_metadata()->db_offsets;
@@ -642,7 +645,7 @@ public:
 
 static_assert(
     sizeof(UpdateAuxImpl) ==
-    144 + MONAD_MPT_COLLECT_STATS *
+    152 + MONAD_MPT_COLLECT_STATS *
               (sizeof(detail::TrieUpdateCollectedStats) + 4));
 static_assert(alignof(UpdateAuxImpl) == 8);
 
@@ -764,9 +767,9 @@ class UpdateAux<void> final : public UpdateAuxImpl
 
 public:
     UpdateAux(
-        MONAD_ASYNC_NAMESPACE::AsyncIO *io_ = nullptr,
+        MONAD_ASYNC_NAMESPACE::AsyncIO *io_ = nullptr, LruList *list = nullptr,
         std::optional<CompactConfig> compact_config_ = std::nullopt)
-        : UpdateAuxImpl(io_, compact_config_)
+        : UpdateAuxImpl(io_, list, compact_config_)
     {
     }
 
