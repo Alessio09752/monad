@@ -87,6 +87,10 @@ Node::~Node()
         }
         set_next(index, nullptr);
     }
+#ifdef MONAD_MPT_NODE_COUNTER
+    bytes_allocated -= this->get_mem_size();
+    --num_nodes;
+#endif
 }
 
 unsigned Node::to_child_index(unsigned const branch) const noexcept

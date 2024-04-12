@@ -17,6 +17,7 @@
 MONAD_MPT_NAMESPACE_BEGIN
 
 // #define MONAD_MPT_READ_STATS 1
+#define MONAD_MPT_NODE_COUNTER 1
 
 struct Compute;
 class NibblesView;
@@ -108,6 +109,10 @@ class Node
     };
 
 public:
+#ifdef MONAD_MPT_NODE_COUNTER
+    static uint64_t num_nodes;
+    static uint64_t bytes_allocated;
+#endif
     static constexpr size_t max_size_for_boost_pools = 66544;
     static constexpr size_t max_number_of_children = 16;
     static constexpr uint8_t max_data_len = (1U << 6) - 1;
@@ -181,6 +186,10 @@ public:
     static UniquePtr make(size_t bytes, Args &&...args)
     {
         MONAD_DEBUG_ASSERT(bytes <= Node::max_size);
+#ifdef MONAD_MPT_NODE_COUNTER
+        bytes_allocated += bytes;
+        ++num_nodes;
+#endif
         return allocators::allocate_aliasing_unique<
             std::allocator<Node>,
             BytesAllocator,
@@ -273,6 +282,11 @@ public:
 static_assert(std::is_standard_layout_v<Node>, "required by offsetof");
 static_assert(sizeof(Node) == 16);
 static_assert(alignof(Node) == 8);
+
+#ifdef MONAD_MPT_NODE_COUNTER
+inline uint64_t Node::num_nodes = 0;
+inline uint64_t Node::bytes_allocated = 0;
+#endif
 
 // ChildData is for temporarily holding a child's info, including child ptr,
 // file offset and hash data, in the update recursion.

@@ -126,11 +126,12 @@ public:
                                      static_cast<uint64_t>(elapsed);
                 LOG_INFO(
                     "Run {:4d} blocks to {:8d}, number of transactions {:6d}, "
-                    "tps = {:5d}",
+                    "tps = {:5d}, num nodes = {}",
                     block_number - start_block_number_batch + 1,
                     block_number,
                     (n_transactions_batch),
-                    tps);
+                    tps,
+                    mpt::Node::num_nodes);
                 // reset to start a new batch
                 start_block_number_batch = block_number + 1;
                 n_transactions_batch = 0;
