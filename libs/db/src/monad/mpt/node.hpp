@@ -16,6 +16,8 @@
 
 MONAD_MPT_NAMESPACE_BEGIN
 
+// #define MONAD_MPT_READ_STATS 1
+
 struct Compute;
 class NibblesView;
 

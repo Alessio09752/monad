@@ -505,6 +505,14 @@ Node::UniquePtr UpdateAuxImpl::do_update(
     Node::UniquePtr prev_root, StateMachine &sm, UpdateList &&updates,
     uint64_t const version, bool compaction, bool const can_write_to_fast)
 {
+#ifdef MONAD_MPT_READ_STATS
+    LOG_DEBUG(
+        "execution max creads {}, nreads {}",
+        io->max_reads_in_flight(),
+        io->nreads());
+    io->reset_records();
+#endif
+
     set_can_write_to_fast(can_write_to_fast);
     auto g(unique_lock());
     auto g2(set_current_upsert_tid());
@@ -573,6 +581,13 @@ Node::UniquePtr UpdateAuxImpl::do_update(
         free_compacted_chunks();
         update_ondisk_db_history_metadata(min_version, version);
     }
+#ifdef MONAD_MPT_READ_STATS
+    LOG_DEBUG(
+        "db.upsert() max creads {}, nreads {}",
+        io->max_reads_in_flight(),
+        io->nreads());
+    io->reset_records();
+#endif
     return root;
 }
 
