@@ -158,7 +158,7 @@ class UpdateAuxImpl
 
     void reset_node_writers();
 
-    void advance_compact_offsets(NodeCursor);
+    void advance_compact_offsets(NodeCursor, bool can_compact_slow);
 
     void free_compacted_chunks();
 
