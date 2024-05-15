@@ -516,8 +516,8 @@ public:
     void collect_compaction_read_stats(
         chunk_offset_t node_offset, unsigned bytes_to_read);
     void collect_compacted_nodes_stats(
-        compact_virtual_chunk_offset_t subtrie_min_offset_fast,
-        compact_virtual_chunk_offset_t subtrie_min_offset_slow);
+        bool const copy_node_for_fast, bool const rewrite_to_fast,
+        virtual_chunk_offset_t node_offset, uint32_t node_disk_size);
     void collect_compacted_nodes_from_to_stats(
         chunk_offset_t node_offset, bool rewrite_to_fast);
     void print_update_stats();
@@ -642,7 +642,8 @@ public:
 
 static_assert(
     sizeof(UpdateAuxImpl) ==
-    144 + MONAD_MPT_COLLECT_STATS * sizeof(detail::TrieUpdateCollectedStats));
+    144 + MONAD_MPT_COLLECT_STATS *
+              (sizeof(detail::TrieUpdateCollectedStats) + 4));
 static_assert(alignof(UpdateAuxImpl) == 8);
 
 template <lockable_or_void LockType = void>

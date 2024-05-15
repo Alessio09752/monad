@@ -73,7 +73,8 @@ void create_node_compute_data_possibly_async(
 
 void compact_(
     UpdateAuxImpl &, StateMachine &, CompactTNode *parent, unsigned index,
-    Node *, bool cached, chunk_offset_t node_offset = INVALID_OFFSET);
+    Node *, bool cached, chunk_offset_t node_offset,
+    bool copy_node_for_fast_or_slow);
 
 void try_fillin_parent_with_rewritten_node(
     UpdateAuxImpl &, CompactTNode::unique_ptr_type);
@@ -446,17 +447,19 @@ struct compaction_receiver
     unsigned bytes_to_read;
     uint16_t buffer_off;
     std::unique_ptr<StateMachine> sm;
+    bool copy_node_for_fast_or_slow;
 
     compaction_receiver(
         UpdateAuxImpl *aux_, std::unique_ptr<StateMachine> sm_,
         CompactTNode *tnode_, unsigned const index_,
-        chunk_offset_t const offset)
+        chunk_offset_t const offset, bool const copy_node_for_fast_or_slow_)
         : aux(aux_)
         , rd_offset({0, 0})
         , orig_offset(offset)
         , tnode(tnode_)
         , index(static_cast<uint8_t>(index_))
         , sm(std::move(sm_))
+        , copy_node_for_fast_or_slow(copy_node_for_fast_or_slow_)
     {
         MONAD_ASSERT(tnode);
         MONAD_ASSERT(tnode->npending > 0 && tnode->npending <= 16);
@@ -481,7 +484,15 @@ struct compaction_receiver
         Node *node = detail::deserialize_node_from_receiver_result(
                          std::move(buffer_), buffer_off, io_state)
                          .release();
-        compact_(*aux, *sm, tnode, index, node, false, orig_offset);
+        compact_(
+            *aux,
+            *sm,
+            tnode,
+            index,
+            node,
+            false,
+            orig_offset,
+            copy_node_for_fast_or_slow);
         // now if tnode has everything it needs
         while (!tnode->npending) {
             if (tnode->type == tnode_type::update) {
@@ -915,10 +926,9 @@ void dispatch_updates_impl_(
             if (aux.is_on_disk() && sm.compact() &&
                 (old->min_offset_fast(old_index) < aux.compact_offset_fast ||
                  old->min_offset_slow(old_index) < aux.compact_offset_slow)) {
-                aux.collect_compacted_nodes_stats(
-                    old->min_offset_fast(old_index),
-                    old->min_offset_slow(old_index));
                 child.offset = INVALID_OFFSET; // to be rewritten
+                bool const copy_node_for_fast_or_slow =
+                    old->min_offset_fast(old_index) < aux.compact_offset_fast;
                 compact_(
                     aux,
                     sm,
@@ -926,7 +936,8 @@ void dispatch_updates_impl_(
                     j,
                     child.ptr,
                     true,
-                    orig_child_offset);
+                    orig_child_offset,
+                    copy_node_for_fast_or_slow);
             }
             else {
                 --tnode->npending;
@@ -1060,10 +1071,17 @@ void mismatch_handler_(
                 aux.is_on_disk() && sm.compact() &&
                 (min_offset_fast < aux.compact_offset_fast ||
                  min_offset_slow < aux.compact_offset_slow)) {
-                aux.collect_compacted_nodes_stats(
-                    min_offset_fast, min_offset_slow);
+                bool const copy_node_for_fast =
+                    min_offset_fast < aux.compact_offset_fast;
                 compact_(
-                    aux, sm, (CompactTNode *)tnode.get(), j, child.ptr, true);
+                    aux,
+                    sm,
+                    (CompactTNode *)tnode.get(),
+                    j,
+                    child.ptr,
+                    true,
+                    INVALID_OFFSET,
+                    copy_node_for_fast);
             }
             else {
                 --tnode->npending;
@@ -1077,11 +1095,16 @@ void mismatch_handler_(
 void compact_(
     UpdateAuxImpl &aux, StateMachine &sm, CompactTNode *const parent,
     unsigned const index, Node *const node, bool const cached,
-    chunk_offset_t const node_offset)
+    chunk_offset_t const node_offset, bool const copy_node_for_fast_or_slow)
 {
     if (!node) {
         compaction_receiver receiver(
-            &aux, sm.clone(), parent, index, node_offset);
+            &aux,
+            sm.clone(),
+            parent,
+            index,
+            node_offset,
+            copy_node_for_fast_or_slow);
         async_read(aux, std::move(receiver));
         return;
     }
@@ -1098,15 +1121,25 @@ void compact_(
     auto tnode =
         CompactTNode::make(parent, index, node, rewrite_to_fast, cached);
 
-    aux.collect_compacted_nodes_from_to_stats(node_offset, rewrite_to_fast);
+    aux.collect_compacted_nodes_stats(
+        copy_node_for_fast_or_slow,
+        rewrite_to_fast,
+        node_offset == INVALID_OFFSET ? INVALID_VIRTUAL_OFFSET
+                                      : aux.physical_to_virtual(node_offset),
+        node->get_disk_size());
 
     for (unsigned j = 0; j < node->number_of_children(); ++j) {
         if (node->min_offset_fast(j) < aux.compact_offset_fast ||
             node->min_offset_slow(j) < aux.compact_offset_slow) {
-            aux.collect_compacted_nodes_stats(
-                node->min_offset_fast(j), node->min_offset_slow(j));
             compact_(
-                aux, sm, tnode.get(), j, node->next(j), true, node->fnext(j));
+                aux,
+                sm,
+                tnode.get(),
+                j,
+                node->next(j),
+                true,
+                node->fnext(j),
+                node->min_offset_fast(j) < aux.compact_offset_fast);
         }
         else {
             --tnode->npending;
