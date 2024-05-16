@@ -544,8 +544,6 @@ Node::UniquePtr UpdateAuxImpl::do_update(
                 find_blocking(*this, *prev_root, versions_to_erase.back());
             MONAD_ASSERT(res == find_result::success);
             // 2. advance compaction offsets
-            printf("version %lu\n", version);
-
             advance_compact_offsets(erase_cursor, min_version > 12000001llu);
         }
     }
