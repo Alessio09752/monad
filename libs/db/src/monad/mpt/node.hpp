@@ -291,7 +291,6 @@ public:
 
     bool is_in_list() const
     {
-        MONAD_ASSERT((prev != nullptr) == (after != nullptr));
         return prev != nullptr;
     }
 };
@@ -389,8 +388,6 @@ int64_t calc_min_version(Node const &);
 
 class LruList
 {
-    size_t max_size_{1000000};
-    size_t size_{0};
     Node::UniquePtr head_{};
     Node::UniquePtr tail_{};
 
@@ -408,16 +405,26 @@ class LruList
         node->after = head;
         head->prev = node;
         head_->after = node;
-        ++size_;
+    }
+
+    void evict()
+    {
+        MONAD_DEBUG_ASSERT(size == max_size);
+        Node *const target = tail_->prev;
+        remove(target);
+        Node::UniquePtr{target}.reset();
     }
 
 public:
     static constexpr uintptr_t INVALID_RESET_ADDR = 0xffffffffffffffff;
 
+    size_t max_size{1000000};
+    size_t size{0};
+
     LruList(size_t const max_size)
-        : max_size_{max_size}
-        , head_{make_node(0, {}, {}, std::nullopt, {}, 0)}
+        : head_{make_node(0, {}, {}, std::nullopt, {}, 0)}
         , tail_{make_node(0, {}, {}, std::nullopt, {}, 0)}
+        , max_size{max_size}
     {
         head_->after = tail_.get();
         tail_->prev = head_.get();
@@ -426,17 +433,9 @@ public:
     ~LruList()
     {
         // trie nodes should all be freed before destructing LRU list.
-        MONAD_ASSERT(size_ == 0);
+        MONAD_ASSERT(size == 0);
         head_->after = nullptr;
         tail_->prev = nullptr;
-    }
-
-    void evict()
-    {
-        MONAD_DEBUG_ASSERT(size_ == max_size_);
-        Node *const target = tail_->prev;
-        remove(target);
-        Node::UniquePtr{target}.reset();
     }
 
     void remove(Node *const target)
@@ -453,14 +452,12 @@ public:
 
     void unlink(Node *node)
     {
-        MONAD_DEBUG_ASSERT(size_ > 0);
+        MONAD_DEBUG_ASSERT(size > 0);
         Node *const prev = node->prev;
         Node *const next = node->after;
         prev->after = next;
         next->prev = prev;
         node->prev = nullptr;
-        node->after = nullptr;
-        --size_;
     }
 
     // call update() everytime we access an in memory node or create a trie node
@@ -470,8 +467,11 @@ public:
             move_to_front(node);
             return;
         }
-        if (size_ >= max_size_) {
+        if (size >= max_size) {
             evict();
+        }
+        else {
+            ++size;
         }
         push_front(node);
     }

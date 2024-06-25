@@ -86,6 +86,7 @@ Node::~Node()
     if (this->is_in_list()) {
         MONAD_DEBUG_ASSERT(list != nullptr);
         Node::list->remove(this);
+        --Node::list->size;
     }
 }
 

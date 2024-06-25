@@ -780,6 +780,7 @@ void upsert_(
     }
     if (Node::list) {
         if (old->is_in_list()) {
+            --Node::list->size;
             Node::list->unlink(old.get());
         }
     }
