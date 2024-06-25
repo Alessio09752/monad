@@ -81,6 +81,13 @@ namespace
                            std::move(buffer_), buffer_off, io_state)
                            .release();
                 parent->set_next(branch_index, node);
+                // any non memory child infers not in level based cache, thus
+                // should alaways added to lru cache
+                if (Node::list) {
+                    Node::list->update(node);
+                    node->addr_to_reset =
+                        parent->next_data() + branch_index * sizeof(Node *);
+                }
             }
             auto const offset = parent->fnext(branch_index);
             auto it = inflights.find(offset);
@@ -112,6 +119,9 @@ void find_recursive(
     unsigned prefix_index = 0;
     unsigned node_prefix_index = root.prefix_index;
     Node *node = root.node;
+    if (node->is_in_list()) {
+        Node::list->update(node);
+    }
     for (; node_prefix_index < node->path_nibble_index_end;
          ++node_prefix_index, ++prefix_index) {
         if (prefix_index >= key.nibble_size()) {
@@ -141,9 +151,8 @@ void find_recursive(
         auto const next_key =
             key.substr(static_cast<unsigned char>(prefix_index) + 1u);
         auto const child_index = node->to_child_index(branch);
-        if (node->next(child_index) != nullptr) {
-            find_recursive(
-                aux, inflights, promise, *node->next(child_index), next_key);
+        if (auto *const next = node->next(child_index); next != nullptr) {
+            find_recursive(aux, inflights, promise, *next, next_key);
             return;
         }
         if (aux.io->owning_thread_id() != gettid()) {
