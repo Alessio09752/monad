@@ -483,16 +483,24 @@ Node *create_node_from_children_if_any(
     // handle non child and single child cases
     auto const number_of_children = static_cast<unsigned>(std::popcount(mask));
     if (number_of_children == 0) {
-        return leaf_data.has_value()
-                   ? make_node(0, {}, path, leaf_data.value(), {}, version)
-                         .release()
-                   : nullptr;
+        return leaf_data.has_value() ? make_node(
+                                           0,
+                                           {},
+                                           path,
+                                           leaf_data.value(),
+                                           {},
+                                           version,
+                                           sm.cache())
+                                           .release()
+                                     : nullptr;
     }
     else if (number_of_children == 1 && !leaf_data.has_value()) {
         auto const j = bitmask_index(
             orig_mask, static_cast<unsigned>(std::countr_zero(mask)));
         MONAD_DEBUG_ASSERT(children[j].ptr);
         auto const node = Node::UniquePtr{children[j].ptr};
+        node->addr_to_reset = nullptr;
+        children[j].ptr = nullptr; // reset
         /* Note: there's a potential superfluous extension hash recomputation
         when node coaleases upon erases, because we compute node hash when path
         is not yet the final form. There's not yet a good way to avoid this
@@ -503,7 +511,8 @@ Node *create_node_from_children_if_any(
                    concat(path, children[j].branch, node->path_nibble_view()),
                    node->has_value() ? std::make_optional(node->value())
                                      : std::nullopt,
-                   version)
+                   version,
+                   sm.cache())
             .release();
     }
     MONAD_DEBUG_ASSERT(
@@ -531,7 +540,8 @@ Node *create_node_from_children_if_any(
             }
             // apply cache based on state machine state, always cache node that
             // is a single child
-            if (child.ptr && number_of_children > 1 && !child.cache_node) {
+            if (child.ptr && number_of_children > 1 && !Node::list &&
+                !child.cache_node) {
                 {
                     Node::UniquePtr const _{child.ptr};
                 }
@@ -540,7 +550,7 @@ Node *create_node_from_children_if_any(
         }
     }
     return create_node_with_children(
-        sm.get_compute(), mask, children, path, leaf_data, version);
+        sm.get_compute(), mask, children, path, leaf_data, version, sm.cache());
 }
 
 void create_node_compute_data_possibly_async(
@@ -668,7 +678,13 @@ void create_new_trie_(
             aux.collect_number_nodes_created_stats();
             entry.finalize(
                 *make_node(
-                     0, {}, path, update.value.value(), {}, update.version)
+                     0,
+                     {},
+                     path,
+                     update.value.value(),
+                     {},
+                     update.version,
+                     sm.cache())
                      .release(),
                 sm.get_compute(),
                 sm.cache());
@@ -762,6 +778,12 @@ void upsert_(
         async_read(aux, std::move(receiver));
         return;
     }
+    if (Node::list) {
+        if (old->is_in_list()) {
+            Node::list->unlink(old.get());
+        }
+    }
+    MONAD_DEBUG_ASSERT(!old->is_in_list());
     if (old_prefix_index == INVALID_PATH_INDEX) {
         old_prefix_index = old->path_start_nibble();
         MONAD_DEBUG_ASSERT(old_prefix_index != INVALID_PATH_INDEX);
@@ -860,6 +882,7 @@ void dispatch_updates_impl_(
     std::optional<byte_string_view> const opt_leaf_data, int64_t const version)
 {
     Node *old = old_ptr.get();
+    MONAD_DEBUG_ASSERT(!old->is_in_list());
     uint16_t const orig_mask = old->mask | requests.mask;
     auto const number_of_children =
         static_cast<unsigned>(std::popcount(orig_mask));
@@ -943,6 +966,7 @@ void dispatch_updates_flat_list_(
     ChildData &entry, Node::UniquePtr old, Requests &requests,
     NibblesView const path, unsigned prefix_index)
 {
+    MONAD_DEBUG_ASSERT(!old->is_in_list());
     auto &opt_leaf = requests.opt_leaf;
     auto opt_leaf_data = old->opt_value();
     if (opt_leaf.has_value()) {
@@ -998,6 +1022,7 @@ void mismatch_handler_(
     unsigned const prefix_index)
 {
     Node &old = *old_ptr;
+    MONAD_DEBUG_ASSERT(!old.is_in_list());
     MONAD_DEBUG_ASSERT(old.has_path());
     // Note: no leaf can be created at an existing non-leaf node
     MONAD_DEBUG_ASSERT(!requests.opt_leaf.has_value());
@@ -1057,7 +1082,8 @@ void mismatch_handler_(
             child = ChildData{.branch = static_cast<uint8_t>(i)};
             // Updated node inherits the version number directly from old node
             child.finalize(
-                *make_node(old, path_suffix, old.opt_value(), old.version)
+                *make_node(
+                     old, path_suffix, old.opt_value(), old.version, sm.cache())
                      .release(),
                 sm.get_compute(),
                 sm.cache());

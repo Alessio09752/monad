@@ -611,6 +611,7 @@ TrieDb::TrieDb(
     std::istream &code, uint64_t const init_block_number, size_t const buf_size)
     : TrieDb{config}
 {
+    db_.disable_lru();
     if (db_.root().is_valid()) {
         throw std::runtime_error(
             "Unable to load snapshot to an existing db, truncate the "
@@ -621,6 +622,7 @@ TrieDb::TrieDb(
     } // was init to 0 and will remain 0 for in memory db
     BinaryDbLoader loader{db_, buf_size, block_number_};
     loader.load(accounts, code);
+    db_.enable_lru();
 }
 
 TrieDb::~TrieDb() = default;

@@ -96,7 +96,8 @@ Node::UniquePtr copy_node(
                                node->path_nibble_view(),
                                std::nullopt,
                                0,
-                               leaf->version)
+                               leaf->version,
+                               true)
                         .release();
                 }();
                 break;
@@ -167,7 +168,8 @@ Node::UniquePtr copy_node(
                                node->path_data()},
                            std::nullopt,
                            0,
-                           dest_leaf->version)
+                           dest_leaf->version,
+                           true)
                     .release();
             }();
             break;
@@ -197,6 +199,9 @@ Node::UniquePtr copy_node(
         if (parent) {
             auto const child_index = parent->to_child_index(branch_i);
             parent->next_ptr(child_index).reset(); // deallocate child (= node)
+            if (Node::list) {
+                Node::list->update(new_node);
+            }
             parent->set_next(child_index, new_node);
         }
         else {

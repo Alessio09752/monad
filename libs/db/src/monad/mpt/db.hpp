@@ -94,6 +94,9 @@ public:
     size_t prefetch();
     // Pump any async DB operations. RO only.
     size_t poll(bool blocking, size_t count = 1);
+
+    void disable_lru();
+    void enable_lru();
 };
 
 template <class T>

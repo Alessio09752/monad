@@ -94,6 +94,10 @@ struct Db::Impl
     {
         return true;
     }
+
+    virtual void disable_lru() {}
+
+    virtual void enable_lru() {}
 };
 
 struct Db::ROOnDisk final : public Db::Impl
@@ -638,6 +642,7 @@ struct Db::RWOnDisk final : public Db::Impl
     std::unique_ptr<TrieDbWorker> worker_;
     std::thread worker_thread_;
     StateMachine &machine_;
+    std::unique_ptr<LruList> lru_list_;
     UpdateAux<> aux_;
     Node::UniquePtr root_;
 
@@ -652,6 +657,10 @@ struct Db::RWOnDisk final : public Db::Impl
             worker_.reset();
         })
         , machine_{machine}
+        , lru_list_(
+              options.lru_size.has_value()
+                  ? std::make_unique<LruList>(options.lru_size.value())
+                  : std::unique_ptr<LruList>())
         , aux_{[&] {
             comms_.enqueue({});
             while (comms_.size_approx() > 0) {
@@ -667,6 +676,17 @@ struct Db::RWOnDisk final : public Db::Impl
                         worker_->pool, aux_.get_root_offset())}
                   : Node::UniquePtr{})
     {
+        enable_lru();
+    }
+
+    virtual void disable_lru() override
+    {
+        Node::list = nullptr;
+    }
+
+    virtual void enable_lru() override
+    {
+        Node::list = lru_list_.get();
     }
 
     ~RWOnDisk()
@@ -680,6 +700,9 @@ struct Db::RWOnDisk final : public Db::Impl
             cond_.notify_one();
         }
         worker_thread_.join();
+        // trie root_ must be destroyed before lru list
+        root_.reset();
+        lru_list_.reset();
     }
 
     virtual Node::UniquePtr &root() override
@@ -1039,6 +1062,16 @@ namespace detail
         abort();
     }
 
+}
+
+void Db::disable_lru()
+{
+    impl_->disable_lru();
+}
+
+void Db::enable_lru()
+{
+    impl_->enable_lru();
 }
 
 MONAD_MPT_NAMESPACE_END
