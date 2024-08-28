@@ -395,8 +395,8 @@ class LruList
 {
     Node::UniquePtr head_{};
     Node::UniquePtr tail_{};
-    uint64_t max_size_{2ULL * 1024 * 1024 * 1024}; // 2GB
-    uint64_t size_{0};
+    uint64_t max_bytes_{2ULL * 1024 * 1024 * 1024}; // 2GB
+    uint64_t bytes_{0};
 
     void move_to_front(Node *node);
     void push_front(Node *node);
@@ -408,7 +408,7 @@ public:
 
     constexpr bool is_empty() const
     {
-        return size_ == 0;
+        return bytes_ == 0;
     }
 
     // strip node off of list and free

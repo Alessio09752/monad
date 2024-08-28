@@ -74,8 +74,8 @@ void create_node_compute_data_possibly_async(
 
 void compact_(
     UpdateAuxImpl &, StateMachine &, CompactTNode *parent, unsigned index,
-    Node *, bool cached, chunk_offset_t node_offset,
-    bool copy_node_for_fast_or_slow);
+    Node *, chunk_offset_t node_offset, bool copy_node_for_fast_or_slow,
+    bool recently_read_for_compact = false);
 
 void try_fillin_parent_with_rewritten_node(
     UpdateAuxImpl &, CompactTNode::unique_ptr_type);
@@ -462,9 +462,9 @@ struct compaction_receiver
             tnode,
             index,
             node,
-            false,
             orig_offset,
-            copy_node_for_fast_or_slow);
+            copy_node_for_fast_or_slow,
+            true);
         // now if tnode has everything it needs
         while (!tnode->npending) {
             if (tnode->type == tnode_type::update) {
@@ -553,8 +553,8 @@ Node *create_node_from_children_if_any(
             // If LRU not enabled, apply cache based on state machine, always
             // cache node that is a single child. Otherwise, LRU eviction will
             // manage the node deallocation
-            if (!aux.lru_list && child.ptr && number_of_children > 1 &&
-                !child.cache_node) {
+            if (child.ptr && !child.ptr->is_in_lru_cache() &&
+                number_of_children > 1 && !child.cache_node) {
                 {
                     Node::UniquePtr const _{child.ptr};
                 }
@@ -970,7 +970,6 @@ void dispatch_updates_impl_(
                     reinterpret_cast<CompactTNode *>(tnode.get()),
                     j,
                     child.ptr,
-                    true,
                     orig_child_offset,
                     copy_node_for_fast);
             }
@@ -1123,7 +1122,6 @@ void mismatch_handler_(
                     (CompactTNode *)tnode.get(),
                     j,
                     child.ptr,
-                    true,
                     INVALID_OFFSET,
                     copy_node_for_fast);
             }
@@ -1138,8 +1136,8 @@ void mismatch_handler_(
 
 void compact_(
     UpdateAuxImpl &aux, StateMachine &sm, CompactTNode *const parent,
-    unsigned const index, Node *const node, bool const cached,
-    chunk_offset_t const node_offset, bool const copy_node_for_fast_or_slow)
+    unsigned const index, Node *const node, chunk_offset_t const node_offset,
+    bool const copy_node_for_fast_or_slow, bool const recently_read_for_compact)
 {
     if (!node) {
         compaction_receiver receiver(
@@ -1170,8 +1168,8 @@ void compact_(
                (!virtual_node_offset.in_fast_list() &&
                 compacted_virtual_offset >= aux.compact_offset_slow);
     }();
-    auto tnode =
-        CompactTNode::make(parent, index, node, rewrite_to_fast, cached);
+    auto tnode = CompactTNode::make(
+        parent, index, node, rewrite_to_fast, recently_read_for_compact);
 
     aux.collect_compacted_nodes_stats(
         copy_node_for_fast_or_slow,
@@ -1188,7 +1186,6 @@ void compact_(
                 tnode.get(),
                 j,
                 node->next(j),
-                true,
                 node->fnext(j),
                 node->min_offset_fast(j) < aux.compact_offset_fast);
         }
@@ -1235,16 +1232,12 @@ void try_fillin_parent_with_rewritten_node(
         parent->node->set_fnext(index, new_offset);
         parent->node->set_min_offset_fast(index, min_offset_fast);
         parent->node->set_min_offset_slow(index, min_offset_slow);
-        if (tnode->cached) { // debug
-            MONAD_DEBUG_ASSERT(parent->node->next(index) == tnode->node);
-        }
     }
     else { // parent tnode is an update tnode
         auto *const p = reinterpret_cast<UpwardTreeNode *>(parent);
         auto &child = p->children[index];
         // child of an update tnode always has `cached = true` and shares the
         // same lifetime as its parent node
-        MONAD_DEBUG_ASSERT(tnode->cached);
         if (tnode->node->is_in_lru_cache() && child.ptr == tnode->node) {
             MONAD_DEBUG_ASSERT(
                 tnode->node->parent_reference_address == &(child.ptr) ||
@@ -1252,8 +1245,16 @@ void try_fillin_parent_with_rewritten_node(
                 tnode->node->parent_reference_address == nullptr);
         }
         MONAD_DEBUG_ASSERT(child.offset == INVALID_OFFSET);
-        child.ptr =
-            tnode->node; // let parent tnode manage tnode->node's lifetime
+        child.ptr = tnode->node;
+        /* let parent tnode manage tnode->node's lifetime, do NOT deallcate when
+         `CompactTNode tnode` goes out of scope, because there is a corner case
+         where update tnode has single child left after applying all updates,
+         but if deallocated, then that single child may have been compacted and
+         deallocated from memory but not yet landed on disk (either in write
+         buffer or inflight for write), thus `cached` value is either the node
+         is currently cached in memory or its node is child of an update tnode.
+       */
+        tnode->node_lifetime_with_parent = true;
         child.offset = new_offset;
         child.min_offset_fast = min_offset_fast;
         child.min_offset_slow = min_offset_slow;

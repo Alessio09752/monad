@@ -1,8 +1,10 @@
 #pragma once
 
+#include <monad/core/assert.h>
 #include <monad/core/byte_string.hpp>
 #include <monad/mem/allocators.hpp>
 
+#include <monad/mpt/config.hpp>
 #include <monad/mpt/nibbles_view.hpp>
 #include <monad/mpt/node.hpp>
 #include <monad/mpt/util.hpp>
@@ -107,26 +109,21 @@ struct CompactTNode
     uint8_t npending{0};
     uint8_t index{INVALID_BRANCH};
     bool rewrite_to_fast{false};
-    bool cached{false};
+    bool recently_read_for_compact{false}; // not cached if true
+    bool node_lifetime_with_parent{false};
+    bool start_as_lru_cached{false};
     Node *node;
 
     CompactTNode(
         CompactTNode *const parent, unsigned const index, Node *const node,
-        bool const rewrite_to_fast, bool const currently_cached)
+        bool const rewrite_to_fast, bool const recently_read_for_compact)
         : parent(parent)
         , type(tnode_type::copy)
         , npending(static_cast<uint8_t>(node->number_of_children()))
         , index(static_cast<uint8_t>(index))
         , rewrite_to_fast(rewrite_to_fast)
-        , cached(/* Should always cache the compacted node who is child of an
-                    update tnode, because there is a corner case where update
-                    tnode only has single child left after applying all updates,
-                    but if not cached, then that single child may have been
-                    compacted and deallocated from memory but not yet landed on
-                    disk (either in write buffer or inflight for write), thus
-                    `cached` value is either the node is currently cached in
-                    memory or its node is child of an update tnode. */
-                 currently_cached || parent->type == tnode_type::update)
+        , recently_read_for_compact(recently_read_for_compact)
+        , start_as_lru_cached(node->is_in_lru_cache())
         , node(node)
     {
         // Ensure node is not deallocated during LRU eviction
@@ -137,9 +134,11 @@ struct CompactTNode
     {
         MONAD_DEBUG_ASSERT(npending == 0);
         node->retain_on_eviction_when_compact = false;
-        if (!cached && !node->is_in_lru_cache()) {
-            // Lifetime not managed by it's parent TNode nor by lru, so we can
-            // garbage collect this node
+        if ((recently_read_for_compact && !node_lifetime_with_parent) ||
+            (start_as_lru_cached && !node->is_in_lru_cache())) {
+            MONAD_ASSERT(node->parent_reference_address == nullptr);
+            // Lifetime not managed by its parent TNode nor by lru, garbage
+            // collect this node
             Node::UniquePtr{node}.reset();
         }
     }

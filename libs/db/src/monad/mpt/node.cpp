@@ -444,6 +444,22 @@ void ChildData::copy_old_child(Node *const old, unsigned const i)
     MONAD_DEBUG_ASSERT(is_valid());
 }
 
+LruList::LruList(size_t const max_bytes)
+    : head_{make_node(0, {}, {}, std::nullopt, {}, 0)} // empty node
+    , tail_{make_node(0, {}, {}, std::nullopt, {}, 0)} // empty node
+    , max_bytes_{max_bytes}
+{
+    head_->after = tail_.get();
+    tail_->prev = head_.get();
+}
+
+LruList::~LruList()
+{
+    MONAD_ASSERT(bytes_ == 0);
+    head_->after = nullptr;
+    tail_->prev = nullptr;
+}
+
 void LruList::move_to_front(Node *node)
 {
     MONAD_DEBUG_ASSERT(node->is_in_lru_cache());
@@ -462,18 +478,18 @@ void LruList::move_to_front(Node *node)
 
 void LruList::push_front(Node *node)
 {
-    MONAD_DEBUG_ASSERT(size_ < max_size_);
+    MONAD_DEBUG_ASSERT(bytes_ < max_bytes_);
     Node *const head = head_->after;
     node->prev = head_.get();
     node->after = head;
     head->prev = node;
     head_->after = node;
-    size_ += node->get_mem_size();
+    bytes_ += node->get_mem_size();
 }
 
 void LruList::evict()
 {
-    MONAD_DEBUG_ASSERT(size_ >= max_size_);
+    MONAD_DEBUG_ASSERT(bytes_ >= max_bytes_);
     Node *const target = tail_->prev;
     remove(target);
     if (!target->retain_on_eviction_when_compact) {
@@ -481,27 +497,10 @@ void LruList::evict()
     }
 }
 
-LruList::LruList(size_t const max_size)
-    : head_{make_node(0, {}, {}, std::nullopt, {}, 0)} // empty node
-    , tail_{make_node(0, {}, {}, std::nullopt, {}, 0)} // empty node
-    , max_size_{max_size}
-{
-    head_->after = tail_.get();
-    tail_->prev = head_.get();
-}
-
-LruList::~LruList()
-{
-    MONAD_ASSERT(size_ == 0);
-    head_->after = nullptr;
-    tail_->prev = nullptr;
-}
-
 void LruList::remove(Node *const node)
 {
     MONAD_DEBUG_ASSERT(node != head_.get());
     if (node->parent_reference_address) {
-        MONAD_ASSERT(node->parent_reference_address != nullptr);
         memset(node->parent_reference_address, 0, sizeof(Node *));
     }
     unlink(node);
@@ -509,13 +508,13 @@ void LruList::remove(Node *const node)
 
 void LruList::unlink(Node *const node)
 {
-    MONAD_DEBUG_ASSERT(size_ > 0);
+    MONAD_DEBUG_ASSERT(bytes_ > 0);
     Node *const prev = node->prev;
     Node *const next = node->after;
     prev->after = next;
     next->prev = prev;
     node->prev = nullptr;
-    size_ -= node->get_mem_size();
+    bytes_ -= node->get_mem_size();
 }
 
 void LruList::update(Node *const node)
@@ -524,7 +523,7 @@ void LruList::update(Node *const node)
         move_to_front(node);
         return;
     }
-    if (size_ >= max_size_) {
+    while (bytes_ >= max_bytes_) {
         evict();
     }
     push_front(node);
