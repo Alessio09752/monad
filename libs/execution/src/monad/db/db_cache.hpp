@@ -116,7 +116,10 @@ public:
         StateDeltas const &state_deltas, Code const &code,
         std::vector<Receipt> const &receipts) override
     {
+        auto start_time = std::chrono::steady_clock::now();
         db_.commit(state_deltas, code, receipts);
+        commit_time += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - start_time);
 
         for (auto it = state_deltas.cbegin(); it != state_deltas.cend(); ++it) {
             auto const &address = it->first;
