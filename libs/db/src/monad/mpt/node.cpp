@@ -648,8 +648,8 @@ Node::UniquePtr make_node(
         }
     }
 
-    if (node->list && !cached_by_state_machine) {
-        node->list->update(node.get());
+    if (lru_list && !cached_by_state_machine) {
+        lru_list->update(node.get());
     }
     return node;
 }

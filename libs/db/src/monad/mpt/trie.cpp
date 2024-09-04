@@ -553,7 +553,7 @@ Node *create_node_from_children_if_any(
             // If LRU not enabled, apply cache based on state machine, always
             // cache node that is a single child. Otherwise, LRU eviction will
             // manage the node deallocation
-            if (child.ptr && !child.ptr->is_in_lru_cache() &&
+            if (child.ptr && (!aux.lru_list || !child.ptr->is_in_lru_cache()) &&
                 number_of_children > 1 && !child.cache_node) {
                 {
                     Node::UniquePtr const _{child.ptr};
@@ -799,7 +799,7 @@ void upsert_(
         async_read(aux, std::move(receiver));
         return;
     }
-    if (old->is_in_lru_cache()) {
+    if (aux.lru_list && old->is_in_lru_cache()) {
         // `old` unique ptr manages the node's lifetime
         MONAD_DEBUG_ASSERT(old->list == aux.lru_list);
         aux.lru_list->unlink(old.get());

@@ -121,8 +121,7 @@ void find_recursive(
     unsigned prefix_index = 0;
     unsigned node_prefix_index = root.prefix_index;
     Node *node = root.node;
-    if (node->is_in_lru_cache()) {
-        MONAD_DEBUG_ASSERT(node->list == aux.lru_list);
+    if (aux.lru_list && node->is_in_lru_cache()) {
         aux.lru_list->update(node);
     }
     for (; node_prefix_index < node->path_nibble_index_end;
