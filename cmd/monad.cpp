@@ -66,33 +66,27 @@ namespace fs = std::filesystem;
 using TryGet = std::move_only_function<std::optional<Block>(uint64_t) const>;
 
 void log_tps(
-    Db &db, uint64_t const block_num, uint64_t const nblocks,
-    uint64_t const ntxs, uint64_t const gas,
-    std::chrono::steady_clock::time_point const begin)
+    uint64_t const block_num, uint64_t const nblocks, uint64_t const ntxs,
+    uint64_t const gas, std::chrono::steady_clock::time_point const begin)
 {
     auto const now = std::chrono::steady_clock::now();
-    auto const elapsed_time =
-        std::chrono::duration_cast<std::chrono::microseconds>(now - begin);
     auto const elapsed = std::max(
-        static_cast<uint64_t>(elapsed_time.count()),
+        static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(now - begin)
+                .count()),
         1UL); // for the unlikely case that elapsed < 1 mic
     uint64_t const tps = (ntxs) * 1'000'000 / elapsed;
     uint64_t const gps = gas / elapsed;
 
     LOG_INFO(
-        "Run {:4d} blocks to {:8d}, number of transactions {:6d}, commit "
-        "elapsed {}, elapsed {},"
+        "Run {:4d} blocks to {:8d}, number of transactions {:6d}, "
         "tps = {:5d}, gps = {:4d} M, rss = {:6d} MB",
         nblocks,
         block_num,
         ntxs,
-        std::chrono::duration_cast<std::chrono::microseconds>(db.commit_time),
-        elapsed_time,
         tps,
         gps,
         monad_procfs_self_resident() / (1L << 20));
-    // clear commit time
-    db.commit_time = std::chrono::nanoseconds(0);
 };
 
 Result<std::pair<uint64_t, uint64_t>> run_monad(
@@ -176,7 +170,6 @@ Result<std::pair<uint64_t, uint64_t>> run_monad(
 
         if (block_num % batch_size == 0) {
             log_tps(
-                db,
                 block_num,
                 batch_num_blocks,
                 batch_num_txs,
@@ -191,12 +184,7 @@ Result<std::pair<uint64_t, uint64_t>> run_monad(
     }
     if (batch_num_blocks > 0) {
         log_tps(
-            db,
-            block_num,
-            batch_num_blocks,
-            batch_num_txs,
-            batch_gas,
-            batch_begin);
+            block_num, batch_num_blocks, batch_num_txs, batch_gas, batch_begin);
     }
     return {ntxs, total_gas};
 }

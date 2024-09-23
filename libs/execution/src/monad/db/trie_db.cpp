@@ -152,8 +152,6 @@ void TrieDb::commit(
     StateDeltas const &state_deltas, Code const &code,
     std::vector<Receipt> const &receipts)
 {
-    // auto start_time = std::chrono::steady_clock::now();
-
     MONAD_ASSERT(block_number_ <= std::numeric_limits<int64_t>::max());
 
     UpdateList account_updates;
@@ -247,9 +245,6 @@ void TrieDb::commit(
     update_alloc_.clear();
     bytes_alloc_.clear();
     hash_alloc_.clear();
-
-    // commit_time += std::chrono::duration_cast<std::chrono::nanoseconds>(
-    //     std::chrono::steady_clock::now() - start_time);
 }
 
 void TrieDb::increment_block_number()

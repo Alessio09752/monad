@@ -17,8 +17,6 @@ MONAD_NAMESPACE_BEGIN
 
 struct Db
 {
-    std::chrono::nanoseconds commit_time{0};
-
     virtual std::optional<Account> read_account(Address const &) = 0;
 
     virtual bytes32_t
