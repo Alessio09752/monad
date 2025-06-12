@@ -21,6 +21,8 @@
 #include <monad/procfs/statm.h>
 #include <monad/state2/block_state.hpp>
 
+#include <monad/core/fmt/bytes_fmt.hpp>
+
 #include <boost/outcome/try.hpp>
 #include <quill/Quill.h>
 #include <quill/detail/LogMacros.h>
@@ -179,6 +181,7 @@ Result<std::pair<uint64_t, uint64_t>> runloop_monad(
             WalEntry const entry{
                 .action = WalAction::PROPOSE, .id = bft_block_id.value()};
             if (reader.rewind_to(entry)) {
+                LOG_INFO("found rewind bft_block_id {}", bft_block_id.value());
                 reader.next(); // skip proposal
             }
         }
@@ -198,6 +201,10 @@ Result<std::pair<uint64_t, uint64_t>> runloop_monad(
         auto [action, consensus_header, consensus_body] = reader_res.value();
         auto const block_number = consensus_header.execution_inputs.number;
         if (action == WalAction::PROPOSE) {
+            LOG_INFO(
+                "Processing proposal for block {} at round {}",
+                block_number,
+                consensus_header.round);
             auto const block_time_start = std::chrono::steady_clock::now();
 
             auto const ntxns = consensus_body.transactions.size();
