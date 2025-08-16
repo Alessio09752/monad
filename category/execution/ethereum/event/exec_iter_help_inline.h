@@ -69,7 +69,8 @@ static inline bool _monad_exec_iter_copy_consensus_event(
     if (event->content_ext[MONAD_FLOW_BLOCK_SEQNO] != 0 &&
         event->event_type != MONAD_EXEC_BLOCK_START) {
         uint64_t const iter_save = iter->read_last_seqno;
-        iter->read_last_seqno = event->content_ext[MONAD_FLOW_BLOCK_SEQNO] - 1;
+        monad_event_iterator_set_seqno(
+            iter, event->content_ext[MONAD_FLOW_BLOCK_SEQNO]);
         if (__builtin_expect(
                 monad_event_iterator_try_copy(iter, event) !=
                     MONAD_EVENT_SUCCESS,
@@ -151,27 +152,26 @@ inline bool monad_exec_ring_block_id_matches(
 
     switch (event->event_type) {
     case MONAD_EXEC_BLOCK_START:
-        tag_matches = memcmp(
-                          block_id,
-                          &((struct monad_exec_block_start const *)payload)
-                              ->block_tag.id,
-                          sizeof *block_id) == 0;
-        break;
-
-    case MONAD_EXEC_BLOCK_QC:
-        tag_matches = memcmp(
-                          block_id,
-                          &((struct monad_exec_block_qc const *)payload)
-                              ->block_tag.id,
-                          sizeof *block_id) == 0;
-        break;
-
-    case MONAD_EXEC_BLOCK_FINALIZED:
         tag_matches =
             memcmp(
                 block_id,
-                &((struct monad_exec_block_tag const *)payload)->id,
+                &((struct monad_exec_block_start const *)payload)->block_tag.id,
                 sizeof *block_id) == 0;
+        break;
+
+    case MONAD_EXEC_BLOCK_QC:
+        tag_matches =
+            memcmp(
+                block_id,
+                &((struct monad_exec_block_qc const *)payload)->block_tag.id,
+                sizeof *block_id) == 0;
+        break;
+
+    case MONAD_EXEC_BLOCK_FINALIZED:
+        tag_matches = memcmp(
+                          block_id,
+                          &((struct monad_exec_block_tag const *)payload)->id,
+                          sizeof *block_id) == 0;
         break;
 
     default:
