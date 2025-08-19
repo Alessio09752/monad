@@ -84,7 +84,7 @@ Result<std::pair<uint64_t, uint64_t>> runloop_ethereum(
     uint64_t const end_block_num, sig_atomic_t const volatile &stop)
 {
     uint64_t const batch_size =
-        end_block_num == std::numeric_limits<uint64_t>::max() ? 1 : 1000;
+        end_block_num == std::numeric_limits<uint64_t>::max() ? 1 : 100;
     uint64_t batch_num_blocks = 0;
     uint64_t batch_num_txs = 0;
     uint64_t total_gas = 0;

@@ -63,6 +63,10 @@ class UpdateAux
 
     std::unique_ptr<AsyncWorker> async_worker_;
 
+    // preload progress
+    chunk_offset_t preload_offset_fast_{INVALID_OFFSET};
+    chunk_offset_t preload_offset_slow_{INVALID_OFFSET};
+
     void clear_root_offsets_up_to_and_including(uint64_t version);
     void erase_versions_up_to_and_including(uint64_t version);
     void release_unreferenced_chunks();
@@ -88,6 +92,8 @@ class UpdateAux
         chunk_offset_t &node_writer_offset, bool from_fast_list) noexcept;
 
     BlockingSPSC<std::function<void()>> async_queue_{msync_queue_capacity};
+
+    void preload_helper(bool is_fast);
 
 public:
     // int64_t curr_upsert_auto_expire_version{0};
