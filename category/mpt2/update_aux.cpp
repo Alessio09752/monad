@@ -7,6 +7,7 @@
 #include <category/mpt2/trie.hpp>
 #include <category/mpt2/update.hpp>
 #include <category/storage/db_storage.hpp>
+#include <category/storage/util.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -21,6 +22,11 @@ using namespace MONAD_STORAGE_NAMESPACE;
 
 namespace
 {
+
+    // Only preload when writer is close to the end of already-preloaded area
+    constexpr unsigned PRELOAD_SIZE_BITS = 16; // 64 KiB
+    constexpr size_t PRELOAD_SIZE = 1UL << PRELOAD_SIZE_BITS;
+
     uint32_t divide_and_round(uint32_t const dividend, uint64_t const divisor)
     {
         double const result = dividend / static_cast<double>(divisor);
@@ -146,6 +152,14 @@ UpdateAux::UpdateAux(
         db_storage_.db_metadata()->db_offsets.start_of_wip_offset_fast;
     node_writer_offset_slow =
         db_storage_.db_metadata()->db_offsets.start_of_wip_offset_slow;
+    preload_offset_fast_ = {
+        (uint32_t)node_writer_offset_fast.id,
+        round_down_align<PRELOAD_SIZE_BITS>(node_writer_offset_fast.offset)};
+    preload_offset_slow_ = {
+        (uint32_t)node_writer_offset_slow.id,
+        round_down_align<PRELOAD_SIZE_BITS>(node_writer_offset_slow.offset)};
+    preload_helper(true);
+    preload_helper(false);
 
     // init last block end offsets
     last_block_end_offset_fast_ = compact_virtual_chunk_offset_t{
@@ -155,6 +169,39 @@ UpdateAux::UpdateAux(
 
     if (!is_read_only()) {
         async_worker_ = std::make_unique<AsyncWorker>(*this);
+    }
+}
+
+void UpdateAux::preload_helper(bool const is_fast)
+{
+    auto const writer_offset =
+        is_fast ? node_writer_offset_fast : node_writer_offset_slow;
+    auto &preloaded_offset =
+        is_fast ? preload_offset_fast_ : preload_offset_slow_;
+    if (preloaded_offset.id != writer_offset.id) {
+        MONAD_ASSERT(
+            db_storage_.db_metadata()->free_list.end == preloaded_offset.id);
+        if (writer_offset.offset + PRELOAD_SIZE >= DbStorage::chunk_capacity) {
+            MONAD_ASSERT(
+                preloaded_offset.offset == 0 ||
+                preloaded_offset.offset == PRELOAD_SIZE);
+            auto *const addr = db_storage_.get_data(preloaded_offset);
+            MONAD_ASSERT(madvise(addr, PRELOAD_SIZE, MADV_WILLNEED) != -1);
+            preloaded_offset.offset = PRELOAD_SIZE;
+        }
+        return;
+    }
+    if (writer_offset.offset + PRELOAD_SIZE >= preloaded_offset.offset) {
+        auto *const addr = db_storage_.get_data(preloaded_offset);
+        MONAD_ASSERT(madvise(addr, PRELOAD_SIZE, MADV_WILLNEED) != -1);
+        auto const end_offset = preloaded_offset.offset + PRELOAD_SIZE;
+        if (end_offset >= DbStorage::chunk_capacity) {
+            // switch to free chunk
+            preloaded_offset = {db_storage_.db_metadata()->free_list.end, 0};
+        }
+        else {
+            preloaded_offset.offset = end_offset;
+        }
     }
 }
 
@@ -286,6 +333,7 @@ Node::UniquePtr UpdateAux::parse_node_weak(
     return node;
 }
 
+// TODO: try buffered aligned writes
 chunk_offset_t
 UpdateAux::write_node_to_disk(Node const &node, bool const to_fast_list)
 {
@@ -326,6 +374,8 @@ UpdateAux::write_node_to_disk(Node const &node, bool const to_fast_list)
     else {
         node_writer_offset = node_writer_offset.add_to_offset(bytes_to_append);
     }
+    // preload if current writer offset is close to preload boundary
+    preload_helper(to_fast_list);
     return ret_offset;
 }
 
