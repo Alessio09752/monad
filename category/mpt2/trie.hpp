@@ -224,6 +224,43 @@ public:
         bool const blocking = false)
     {
         aux_.finalize_transaction(root_offset, version);
+
+        using namespace MONAD_STORAGE_NAMESPACE;
+
+        auto const *m = aux_.db_storage_.db_metadata();
+        auto sync_ = [&](chunk_offset_t const start, chunk_offset_t const end) {
+            if (start != end) {
+                auto const *si = m->at(start.id);
+                auto const *ei = m->at(end.id);
+                MONAD_ASSERT(si->insertion_count() <= ei->insertion_count());
+                MONAD_DEBUG_ASSERT(si->in_fast_list == ei->in_fast_list);
+                MONAD_DEBUG_ASSERT(si->in_slow_list == ei->in_slow_list);
+
+                for (auto const *ci = si;; ci = ci->next(m)) {
+                    auto const idx = ci->index(m);
+                    uint32_t offset = 0;
+                    if (ci == si) {
+                        offset = round_down_align<CPU_PAGE_BITS>(
+                            (uint32_t)start.offset);
+                    }
+                    else if (ci == ei) {
+                        offset =
+                            round_up_align<CPU_PAGE_BITS>((uint32_t)end.offset);
+                    }
+                    auto *const data = aux_.db_storage_.get_data({idx, offset});
+                    auto const len = DbStorage::chunk_capacity - offset;
+                    // keep in memory
+                    MONAD_ASSERT(-1 != madvise(data, len, MADV_WILLNEED));
+                    if (ci == ei) {
+                        break;
+                    }
+                }
+            }
+        };
+
+        sync_(fast_offset_start, aux_.node_writer_offset_fast);
+        sync_(slow_offset_start, aux_.node_writer_offset_slow);
+
         // push job to the worker queue
         aux_.async_queue_.push_blocking(
             [aux = &aux_,
