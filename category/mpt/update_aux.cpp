@@ -684,7 +684,7 @@ void UpdateAuxImpl::set_io(
                     std::this_thread::yield();
                 }
                 while (dirty && (std::chrono::steady_clock::now() - begin <
-                                 std::chrono::seconds(1)));
+                                 std::chrono::seconds(5)));
 
                 /* If after one second a dirty bit remains set, and we don't
                 have writable maps, can't forward progress.

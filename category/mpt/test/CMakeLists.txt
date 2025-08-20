@@ -28,7 +28,7 @@ add_trie_test(
 add_trie_test(TARGET compaction_test SOURCES "compaction_test.cpp")
 add_trie_test(TARGET db_metadata_test SOURCES "db_metadata_test.cpp")
 add_trie_test(TARGET update_aux_test SOURCES "update_aux_test.cpp")
-add_trie_test(TARGET db_test SOURCES "db_test.cpp")
+add_trie_test(TARGET db_test SOURCES "db_test.cpp" RUN_SERIAL)
 add_trie_test(TARGET fiber_future_wrapped_find_test SOURCES
               "fiber_future_wrapped_find.cpp")
 add_trie_test(TARGET fiber_future_wrapped_read_test SOURCES

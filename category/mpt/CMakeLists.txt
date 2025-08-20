@@ -83,7 +83,8 @@ target_link_libraries(monad_mpt PUBLIC monad_execution PkgConfig::zstd
 function(add_trie_test)
   set(ONE_VALUE_ARGS TARGET TEST_FILTER)
   set(MULTI_VALUE_ARGS SOURCES LINK_LIBRARIES)
-  cmake_parse_arguments(ADD_TRIE_TEST "" "${ONE_VALUE_ARGS}"
+  set(OPTIONAL_ARGS RUN_SERIAL)
+  cmake_parse_arguments(ADD_TRIE_TEST "${OPTIONAL_ARGS}" "${ONE_VALUE_ARGS}"
                         "${MULTI_VALUE_ARGS}" ${ARGN})
 
   add_executable(
@@ -100,7 +101,8 @@ function(add_trie_test)
     TEST_PREFIX ${PROJECT_NAME}/ TEST_FILTER ${ADD_TRIE_TEST_TEST_FILTER}
     PROPERTIES ENVIRONMENT ASAN_OPTIONS=abort_on_error=1 ENVIRONMENT
                UBSAN_OPTIONS=halt_on_error=1,print_stacktrace=1 ENVIRONMENT
-               TSAN_OPTIONS=external_symbolizer_path=/usr/bin/llvm-symbolizer)
+               TSAN_OPTIONS=external_symbolizer_path=/usr/bin/llvm-symbolizer
+               $<$<BOOL:${ADD_TRIE_TEST_RUN_SERIAL}>:RUN_SERIAL TRUE>)
 endfunction()
 
 add_subdirectory("test")
