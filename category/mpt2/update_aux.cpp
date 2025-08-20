@@ -152,6 +152,43 @@ UpdateAux::UpdateAux(
         db_storage_.db_metadata()->db_offsets.start_of_wip_offset_fast;
     node_writer_offset_slow =
         db_storage_.db_metadata()->db_offsets.start_of_wip_offset_slow;
+    // populate_read for current and last chunk
+    // fast list only
+    chunk_offset_t populate_read_offset = node_writer_offset_fast;
+    if (populate_read_offset.offset != 0) {
+        populate_read_offset.offset =
+            round_down_align<CPU_PAGE_BITS>(populate_read_offset.offset);
+        auto *const addr = db_storage_.get_data(populate_read_offset);
+        madvise(
+            addr,
+            DbStorage::chunk_capacity - populate_read_offset.offset,
+            MADV_POPULATE_READ);
+        madvise(
+            addr,
+            DbStorage::chunk_capacity - populate_read_offset.offset,
+            MADV_WILLNEED);
+    }
+    // populate recently written chunks
+    auto const id = (uint32_t)populate_read_offset.id;
+    unsigned nloaded = 1;
+    uint32_t prev_chunk_id =
+        (uint32_t)db_storage_.db_metadata()->at(id)->prev_chunk_id;
+    while (prev_chunk_id !=
+           detail::db_metadata_t::chunk_info_t::INVALID_CHUNK_ID) {
+        populate_read_offset = {prev_chunk_id, 0};
+        auto *const addr = db_storage_.get_data(populate_read_offset);
+        madvise(addr, DbStorage::chunk_capacity, MADV_POPULATE_READ);
+        madvise(addr, DbStorage::chunk_capacity, MADV_WILLNEED);
+        ++nloaded;
+        if (nloaded > 5) {
+            break;
+        }
+        prev_chunk_id = (uint32_t)db_storage_.db_metadata()
+                            ->at(prev_chunk_id)
+                            ->prev_chunk_id;
+    }
+
+    // preload for write
     preload_offset_fast_ = {
         (uint32_t)node_writer_offset_fast.id,
         round_down_align<PRELOAD_SIZE_BITS>(node_writer_offset_fast.offset)};
