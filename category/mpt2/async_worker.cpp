@@ -2,6 +2,10 @@
 #include <category/mpt2/blocking_spsc.hpp>
 #include <category/mpt2/trie.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 MONAD_MPT2_NAMESPACE_BEGIN
 
 AsyncWorker::AsyncWorker(UpdateAux &aux)

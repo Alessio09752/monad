@@ -93,7 +93,7 @@ class UpdateAux
 
     BlockingSPSC<std::function<void()>> async_queue_{msync_queue_capacity};
 
-    void preload_helper(bool is_fast);
+    void async_preload_helper(bool is_fast);
 
 public:
     // int64_t curr_upsert_auto_expire_version{0};
