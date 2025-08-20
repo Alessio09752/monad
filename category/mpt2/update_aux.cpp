@@ -195,8 +195,8 @@ UpdateAux::UpdateAux(
     preload_offset_slow_ = {
         (uint32_t)node_writer_offset_slow.id,
         round_down_align<PRELOAD_SIZE_BITS>(node_writer_offset_slow.offset)};
-    preload_helper(true);
-    preload_helper(false);
+    async_preload_helper(true);
+    async_preload_helper(false);
 
     // init last block end offsets
     last_block_end_offset_fast_ = compact_virtual_chunk_offset_t{
@@ -209,12 +209,13 @@ UpdateAux::UpdateAux(
     }
 }
 
-void UpdateAux::preload_helper(bool const is_fast)
+void UpdateAux::async_preload_helper(bool const is_fast)
 {
     auto const writer_offset =
         is_fast ? node_writer_offset_fast : node_writer_offset_slow;
     auto &preloaded_offset =
         is_fast ? preload_offset_fast_ : preload_offset_slow_;
+    // TODO: the next free list not necessaily for fast or slow.
     if (preloaded_offset.id != writer_offset.id) {
         MONAD_ASSERT(
             db_storage_.db_metadata()->free_list.end == preloaded_offset.id);
@@ -223,14 +224,22 @@ void UpdateAux::preload_helper(bool const is_fast)
                 preloaded_offset.offset == 0 ||
                 preloaded_offset.offset == PRELOAD_SIZE);
             auto *const addr = db_storage_.get_data(preloaded_offset);
-            MONAD_ASSERT(madvise(addr, PRELOAD_SIZE, MADV_WILLNEED) != -1);
+            // aschronous preload
+            async_queue_.push_blocking([addr] {
+                MONAD_ASSERT(
+                    madvise(addr, PRELOAD_SIZE, MADV_POPULATE_WRITE) != -1);
+            });
             preloaded_offset.offset = PRELOAD_SIZE;
         }
         return;
     }
     if (writer_offset.offset + PRELOAD_SIZE >= preloaded_offset.offset) {
         auto *const addr = db_storage_.get_data(preloaded_offset);
-        MONAD_ASSERT(madvise(addr, PRELOAD_SIZE, MADV_WILLNEED) != -1);
+        // aschronous preload
+        async_queue_.push_blocking([addr] {
+            MONAD_ASSERT(
+                madvise(addr, PRELOAD_SIZE, MADV_POPULATE_WRITE) != -1);
+        });
         auto const end_offset = preloaded_offset.offset + PRELOAD_SIZE;
         if (end_offset >= DbStorage::chunk_capacity) {
             // switch to free chunk
@@ -412,7 +421,7 @@ UpdateAux::write_node_to_disk(Node const &node, bool const to_fast_list)
         node_writer_offset = node_writer_offset.add_to_offset(bytes_to_append);
     }
     // preload if current writer offset is close to preload boundary
-    preload_helper(to_fast_list);
+    async_preload_helper(to_fast_list);
     return ret_offset;
 }
 
@@ -462,11 +471,10 @@ void UpdateAux::do_msync(
                     offset =
                         round_up_align<CPU_PAGE_BITS>((uint32_t)end.offset);
                 }
+                auto *const data = db_storage_.get_data({idx, offset});
+                auto const len = DbStorage::chunk_capacity - offset;
                 MONAD_ASSERT_PRINTF(
-                    -1 != ::msync(
-                              db_storage_.get_data({idx, offset}),
-                              DbStorage::chunk_capacity - offset,
-                              MS_SYNC),
+                    -1 != ::msync(data, len, MS_SYNC),
                     "msync failed: %s",
                     strerror(errno));
                 if (ci == ei) {
