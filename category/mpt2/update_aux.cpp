@@ -157,7 +157,8 @@ UpdateAux::UpdateAux(
     chunk_offset_t populate_read_offset = node_writer_offset_fast;
     if (populate_read_offset.offset != 0) {
         populate_read_offset.offset =
-            round_down_align<CPU_PAGE_BITS>(populate_read_offset.offset);
+            round_down_align<CPU_PAGE_BITS>(populate_read_offset.offset) &
+            chunk_offset_t::max_offset;
         auto *const addr = db_storage_.get_data(populate_read_offset);
         madvise(
             addr,
@@ -246,7 +247,7 @@ void UpdateAux::async_preload_helper(bool const is_fast)
             preloaded_offset = {db_storage_.db_metadata()->free_list.end, 0};
         }
         else {
-            preloaded_offset.offset = end_offset;
+            preloaded_offset.offset = end_offset & chunk_offset_t::max_offset;
         }
     }
 }

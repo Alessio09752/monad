@@ -86,7 +86,7 @@ public:
                 while (!stop_token.stop_requested()) {
                     fiber::PriorityTask task{};
                     if (MONAD_LIKELY(queue_.wait_dequeue_timed(task, 100000))) {
-                        requested_[i] = task.priority;
+                        requested_[i] = (int64_t)task.priority;
                         task.task();
                         requested_[i] = INT64_MAX;
                         MONAD_ASSERT(!pthread_setschedprio(pthread_self(), 1));

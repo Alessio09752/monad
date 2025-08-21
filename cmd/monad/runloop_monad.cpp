@@ -20,9 +20,10 @@
 #include <category/core/blake3.hpp>
 #include <category/core/bytes.hpp>
 #include <category/core/config.hpp>
-#include <category/core/fiber/priority_pool.hpp>
+// #include <category/core/fiber/priority_pool.hpp>
 #include <category/core/keccak.hpp>
 #include <category/core/procfs/statm.h>
+#include <category/core/thread/thread_pool.hpp>
 #include <category/execution/ethereum/block_hash_buffer.hpp>
 #include <category/execution/ethereum/core/block.hpp>
 #include <category/execution/ethereum/core/fmt/bytes_fmt.hpp>
@@ -133,7 +134,7 @@ Result<std::pair<bytes32_t, uint64_t>> propose_block(
     bytes32_t const &block_id,
     MonadConsensusBlockHeader const &consensus_header, Block block,
     BlockHashChain &block_hash_chain, MonadChain const &chain, Db &db,
-    vm::VM &vm, fiber::PriorityPool &priority_pool, bool const is_first_block)
+    vm::VM &vm, ThreadPool &priority_pool, bool const is_first_block)
 {
     [[maybe_unused]] auto const block_start = std::chrono::system_clock::now();
     auto const block_begin = std::chrono::steady_clock::now();
@@ -368,10 +369,11 @@ Result<std::pair<uint64_t, uint64_t>> runloop_monad(
                     header.delayed_execution_results.empty()
                         ? mpt2::INVALID_BLOCK_NUM
                         : header.delayed_execution_results.back().number;
-                to_finalize.push_front(ToFinalize{
-                    .block = header.seqno,
-                    .block_id = id,
-                    .verified_block = verified_block});
+                to_finalize.push_front(
+                    ToFinalize{
+                        .block = header.seqno,
+                        .block_id = id,
+                        .verified_block = verified_block});
 
                 if (!has_executed(raw_db, header, id)) {
                     to_execute.push_front(
@@ -460,11 +462,12 @@ Result<std::pair<uint64_t, uint64_t>> runloop_monad(
         };
 
         for (auto const &[block_id, consensus_header] : to_execute) {
-            BOOST_OUTCOME_TRY(std::visit(
-                [&block_id, handle_to_execute](auto const &header) {
-                    return handle_to_execute(block_id, header);
-                },
-                consensus_header));
+            BOOST_OUTCOME_TRY(
+                std::visit(
+                    [&block_id, handle_to_execute](auto const &header) {
+                        return handle_to_execute(block_id, header);
+                    },
+                    consensus_header));
         }
 
         for (auto const &[block, block_id, verified_block] : to_finalize) {

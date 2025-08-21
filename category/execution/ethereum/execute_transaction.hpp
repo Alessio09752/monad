@@ -21,10 +21,10 @@
 #include <category/execution/ethereum/core/receipt.hpp>
 #include <category/execution/ethereum/trace/call_frame.hpp>
 
-#include <boost/fiber/future/promise.hpp>
 #include <evmc/evmc.hpp>
 
 #include <cstdint>
+#include <future>
 #include <vector>
 
 MONAD_NAMESPACE_BEGIN
@@ -77,7 +77,7 @@ class ExecuteTransaction : public ExecuteTransactionNoValidation<rev>
     BlockHashBuffer const &block_hash_buffer_;
     BlockState &block_state_;
     BlockMetrics &block_metrics_;
-    boost::fibers::promise<void> &prev_;
+    std::promise<void> &prev_;
 
     Result<evmc::Result> execute_impl2(State &, CallTracerBase &);
 
@@ -87,7 +87,7 @@ public:
     ExecuteTransaction(
         Chain const &, uint64_t i, Transaction const &, Address const &,
         BlockHeader const &, BlockHashBuffer const &, BlockState &,
-        BlockMetrics &, boost::fibers::promise<void> &prev);
+        BlockMetrics &, std::promise<void> &prev);
     ~ExecuteTransaction() = default;
 
     Result<ExecutionResult> operator()();

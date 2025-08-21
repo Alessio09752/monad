@@ -16,8 +16,9 @@
 #pragma once
 
 #include <category/core/config.hpp>
-#include <category/core/fiber/priority_pool.hpp>
+// #include <category/core/fiber/priority_pool.hpp>
 #include <category/core/result.hpp>
+#include <category/core/thread/thread_pool.hpp>
 #include <category/execution/ethereum/core/address.hpp>
 #include <category/execution/ethereum/core/receipt.hpp>
 #include <category/execution/ethereum/metrics/block_metrics.hpp>
@@ -39,14 +40,13 @@ struct ExecutionResult;
 template <evmc_revision rev>
 Result<std::vector<ExecutionResult>> execute_block(
     Chain const &, Block &, std::vector<Address> const &senders, BlockState &,
-    BlockHashBuffer const &, fiber::PriorityPool &, BlockMetrics &);
+    BlockHashBuffer const &, ThreadPool &, BlockMetrics &);
 
 Result<std::vector<ExecutionResult>> execute_block(
     Chain const &, evmc_revision, Block &, std::vector<Address> const &senders,
-    BlockState &, BlockHashBuffer const &, fiber::PriorityPool &,
-    BlockMetrics &);
+    BlockState &, BlockHashBuffer const &, ThreadPool &, BlockMetrics &);
 
 std::vector<std::optional<Address>>
-recover_senders(std::vector<Transaction> const &, fiber::PriorityPool &);
+recover_senders(std::vector<Transaction> const &, ThreadPool &);
 
 MONAD_NAMESPACE_END

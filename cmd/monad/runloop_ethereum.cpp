@@ -17,9 +17,10 @@
 
 #include <category/core/assert.h>
 #include <category/core/bytes.hpp>
-#include <category/core/fiber/priority_pool.hpp>
+// #include <category/core/fiber/priority_pool.hpp>
 #include <category/core/keccak.hpp>
 #include <category/core/procfs/statm.h>
+#include <category/core/thread/thread_pool.hpp>
 #include <category/execution/ethereum/block_hash_buffer.hpp>
 #include <category/execution/ethereum/chain/chain.hpp>
 #include <category/execution/ethereum/core/block.hpp>
@@ -80,7 +81,7 @@ namespace
 Result<std::pair<uint64_t, uint64_t>> runloop_ethereum(
     Chain const &chain, std::filesystem::path const &ledger_dir, Db &db,
     vm::VM &vm, BlockHashBufferFinalized &block_hash_buffer,
-    fiber::PriorityPool &priority_pool, uint64_t &block_num,
+    ThreadPool &priority_pool, uint64_t &block_num,
     uint64_t const end_block_num, sig_atomic_t const volatile &stop)
 {
     uint64_t const batch_size =

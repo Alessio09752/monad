@@ -19,9 +19,11 @@
 #include <category/core/assert.h>
 #include <category/core/basic_formatter.hpp>
 #include <category/core/config.hpp>
-#include <category/core/fiber/priority_pool.hpp>
+#include <category/core/cpuset.h>
+// #include <category/core/fiber/priority_pool.hpp>
 #include <category/core/likely.h>
 #include <category/core/procfs/statm.h>
+#include <category/core/thread/thread_pool.hpp>
 #include <category/execution/ethereum/block_hash_buffer.hpp>
 #include <category/execution/ethereum/chain/chain_config.h>
 #include <category/execution/ethereum/chain/ethereum_mainnet.hpp>
@@ -343,7 +345,9 @@ int main(int const argc, char const *argv[])
         start_block_num,
         nblocks);
 
-    fiber::PriorityPool priority_pool{nthreads, nfibers};
+    std::string cpu_set_str = "1-4"; // TODO use cli
+    ThreadPool priority_pool{
+        nthreads, monad_parse_cpuset((char *)cpu_set_str.c_str())};
 
     auto const start_time = std::chrono::steady_clock::now();
 
@@ -395,18 +399,19 @@ int main(int const argc, char const *argv[])
         case CHAIN_CONFIG_MONAD_TESTNET:
         case CHAIN_CONFIG_MONAD_MAINNET:
         case CHAIN_CONFIG_MONAD_TESTNET2:
-            return runloop_monad(
-                dynamic_cast<MonadChain const &>(*chain),
-                block_db_path,
-                db,
-                ctx ? std::reference_wrapper<Db>(*ctx)
-                    : std::reference_wrapper<Db>(triedb),
-                vm,
-                block_hash_buffer,
-                priority_pool,
-                block_num,
-                end_block_num,
-                stop);
+            // return runloop_monad(
+            //     dynamic_cast<MonadChain const &>(*chain),
+            //     block_db_path,
+            //     db,
+            //     ctx ? std::reference_wrapper<Db>(*ctx)
+            //         : std::reference_wrapper<Db>(triedb),
+            //     vm,
+            //     block_hash_buffer,
+            //     priority_pool,
+            //     block_num,
+            //     end_block_num,
+            //     stop);
+            break;
         }
         MONAD_ABORT_PRINTF("Unsupported chain");
     }();

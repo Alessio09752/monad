@@ -32,12 +32,12 @@
 #include <category/execution/ethereum/tx_context.hpp>
 #include <category/execution/ethereum/validate_transaction.hpp>
 
-#include <boost/fiber/future/promise.hpp>
 #include <boost/outcome/try.hpp>
 #include <intx/intx.hpp>
 
 #include <algorithm>
 #include <functional>
+#include <future>
 #include <memory>
 #include <utility>
 
@@ -179,7 +179,7 @@ ExecuteTransaction<rev>::ExecuteTransaction(
     Chain const &chain, uint64_t const i, Transaction const &tx,
     Address const &sender, BlockHeader const &header,
     BlockHashBuffer const &block_hash_buffer, BlockState &block_state,
-    BlockMetrics &block_metrics, boost::fibers::promise<void> &prev)
+    BlockMetrics &block_metrics, std::promise<void> &prev)
     : ExecuteTransactionNoValidation<rev>{chain, tx, sender, header}
     , i_{i}
     , block_hash_buffer_{block_hash_buffer}
@@ -266,12 +266,13 @@ Result<ExecutionResult> ExecuteTransaction<rev>::operator()()
 {
     TRACE_TXN_EVENT(StartTxn);
 
-    BOOST_OUTCOME_TRY(static_validate_transaction<rev>(
-        tx_,
-        header_.base_fee_per_gas,
-        header_.excess_blob_gas,
-        chain_.get_chain_id(),
-        chain_.get_max_code_size(header_.number, header_.timestamp)));
+    BOOST_OUTCOME_TRY(
+        static_validate_transaction<rev>(
+            tx_,
+            header_.base_fee_per_gas,
+            header_.excess_blob_gas,
+            chain_.get_chain_id(),
+            chain_.get_max_code_size(header_.number, header_.timestamp)));
 
     {
         TRACE_TXN_EVENT(StartExecution);

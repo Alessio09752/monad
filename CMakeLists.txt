@@ -253,9 +253,9 @@ endfunction()
 # libs
 # ##############################################################################
 
-add_subdirectory("category/async")
+# add_subdirectory("category/async")
 add_subdirectory("category/core")
-add_subdirectory("category/mpt")
+# add_subdirectory("category/mpt")
 add_subdirectory("category/mpt2")
 add_subdirectory("category/event")
 add_subdirectory("category/execution")
@@ -270,8 +270,9 @@ add_library(monad_execution)
 target_link_libraries(
   monad_execution
   PUBLIC monad_core
-         monad_async
-         monad_trie
+        #  monad_async
+        #  monad_trie
+        monad_trie2
          monad_execution_ethereum
          monad_execution_native
         #  monad_rpc

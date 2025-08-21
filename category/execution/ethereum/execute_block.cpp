@@ -15,10 +15,11 @@
 
 #include <category/core/assert.h>
 #include <category/core/config.hpp>
-#include <category/core/fiber/priority_pool.hpp>
+// #include <category/core/fiber/priority_pool.hpp>
 #include <category/core/int.hpp>
 #include <category/core/likely.h>
 #include <category/core/result.hpp>
+#include <category/core/thread/thread_pool.hpp>
 #include <category/execution/ethereum/block_hash_buffer.hpp>
 #include <category/execution/ethereum/block_reward.hpp>
 #include <category/execution/ethereum/chain/chain.hpp>
@@ -41,12 +42,12 @@
 
 #include <intx/intx.hpp>
 
-#include <boost/fiber/future/promise.hpp>
 #include <boost/outcome/try.hpp>
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -131,13 +132,12 @@ MONAD_ANONYMOUS_NAMESPACE_END
 MONAD_NAMESPACE_BEGIN
 
 std::vector<std::optional<Address>> recover_senders(
-    std::vector<Transaction> const &transactions,
-    fiber::PriorityPool &priority_pool)
+    std::vector<Transaction> const &transactions, ThreadPool &priority_pool)
 {
     std::vector<std::optional<Address>> senders{transactions.size()};
 
-    std::shared_ptr<boost::fibers::promise<void>[]> promises{
-        new boost::fibers::promise<void>[transactions.size()]};
+    std::shared_ptr<std::promise<void>[]> promises{
+        new std::promise<void>[transactions.size()]};
 
     for (unsigned i = 0; i < transactions.size(); ++i) {
         priority_pool.submit(
@@ -162,7 +162,7 @@ template <evmc_revision rev>
 Result<std::vector<ExecutionResult>> execute_block(
     Chain const &chain, Block &block, std::vector<Address> const &senders,
     BlockState &block_state, BlockHashBuffer const &block_hash_buffer,
-    fiber::PriorityPool &priority_pool, BlockMetrics &block_metrics)
+    ThreadPool &priority_pool, BlockMetrics &block_metrics)
 {
     TRACE_BLOCK_EVENT(StartBlock);
 
@@ -183,8 +183,8 @@ Result<std::vector<ExecutionResult>> execute_block(
         }
     }
 
-    std::shared_ptr<boost::fibers::promise<void>[]> promises{
-        new boost::fibers::promise<void>[block.transactions.size() + 1]};
+    std::shared_ptr<std::promise<void>[]> promises{
+        new std::promise<void>[block.transactions.size() + 1]};
     promises[0].set_value();
 
     std::shared_ptr<std::optional<Result<ExecutionResult>>[]> const results{
@@ -269,8 +269,8 @@ EXPLICIT_EVMC_REVISION(execute_block);
 Result<std::vector<ExecutionResult>> execute_block(
     Chain const &chain, evmc_revision const rev, Block &block,
     std::vector<Address> const &senders, BlockState &block_state,
-    BlockHashBuffer const &block_hash_buffer,
-    fiber::PriorityPool &priority_pool, BlockMetrics &block_metrics)
+    BlockHashBuffer const &block_hash_buffer, ThreadPool &priority_pool,
+    BlockMetrics &block_metrics)
 {
     SWITCH_EVMC_REVISION(
         execute_block,

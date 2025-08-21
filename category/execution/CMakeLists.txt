@@ -210,7 +210,7 @@ target_link_libraries(
   PUBLIC monad_core
   PUBLIC monad_trie2
   PRIVATE blst::blst
-  PRIVATE Boost::fiber
+  # PRIVATE Boost::fiber
   PRIVATE Boost::json
   PUBLIC c-kzg-4844
   PRIVATE PkgConfig::brotli
@@ -230,7 +230,7 @@ target_link_libraries(
   monad_execution_native
   PUBLIC monad_execution_ethereum
   PUBLIC monad_core
-  PUBLIC monad_trie
+  PUBLIC monad_trie2
   PUBLIC evmc
   PUBLIC intx::intx
   PUBLIC quill::quill)

@@ -24,8 +24,9 @@ add_executable(
   monad/file_io.cpp
   monad/runloop_ethereum.cpp
   monad/runloop_ethereum.hpp
-  monad/runloop_monad.cpp
-  monad/runloop_monad.hpp)
+  # monad/runloop_monad.cpp
+  # monad/runloop_monad.hpp
+  )
 
 monad_compile_options(monad)
 
