@@ -2,6 +2,7 @@
 
 MONAD_NAMESPACE_BEGIN
 
-static ThreadPool pool{4};
+static cpu_set_t cpu_set{};
+static ThreadPool pool{4, cpu_set};
 
 MONAD_NAMESPACE_END
