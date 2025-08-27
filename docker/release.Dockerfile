@@ -81,4 +81,5 @@ RUN --security=insecure CC=gcc-15 CXX=g++-15 CMAKE_BUILD_TYPE=Release ./scripts/
 FROM base as runner
 COPY --from=build /src/build/category/mpt/monad_mpt /usr/local/bin/
 COPY --from=build /src/build/cmd/monad_cli /usr/local/bin/
+COPY --from=build /src/build/cmd/monad_block_inspector /usr/local/bin/
 COPY --from=build /src/build/cmd/monad /usr/local/bin/
