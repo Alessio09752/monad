@@ -240,7 +240,7 @@ evmc::Result ExecuteTransactionNoValidation<traits>::operator()(
     }
 
     if constexpr (!traits::eip_7702_refund_active()) {
-        // monad doesn't give authorization refunds
+        // monad does not give authorization refunds
         auth_refund = 0;
     }
 
