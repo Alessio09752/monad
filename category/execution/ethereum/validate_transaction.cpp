@@ -68,43 +68,44 @@ Result<void> static_validate_transaction(
         }
     }
 
-    // EIP-2930 & EIP-2718
-    if constexpr (traits::evm_rev() < EVMC_BERLIN) {
-        if (MONAD_UNLIKELY(tx.type != TransactionType::legacy)) {
+    // EIP-2930
+    // TODO: convert to traits::eip_2930_active()
+    if constexpr (!(traits::evm_rev() >= EVMC_BERLIN)) {
+        if (MONAD_UNLIKELY(tx.type == TransactionType::eip2930)) {
             return TransactionError::TypeNotSupported;
         }
     }
+
     // EIP-1559
-    else if constexpr (traits::evm_rev() < EVMC_LONDON) {
-        if (MONAD_UNLIKELY(
-                tx.type != TransactionType::legacy &&
-                tx.type != TransactionType::eip2930)) {
+    // TODO: convert to traits::eip_1559_active()
+    if constexpr (!(traits::evm_rev() >= EVMC_LONDON)) {
+        if (MONAD_UNLIKELY(tx.type == TransactionType::eip1559)) {
             return TransactionError::TypeNotSupported;
         }
     }
-    else if constexpr (traits::evm_rev() < EVMC_CANCUN) {
-        if (MONAD_UNLIKELY(
-                tx.type != TransactionType::legacy &&
-                tx.type != TransactionType::eip2930 &&
-                tx.type != TransactionType::eip1559)) {
+
+    // EIP-4844
+    if constexpr (!traits::eip_4844_active()) {
+        if (MONAD_UNLIKELY(tx.type == TransactionType::eip4844)) {
             return TransactionError::TypeNotSupported;
         }
     }
-    else if constexpr (traits::evm_rev() < EVMC_PRAGUE) {
-        if (MONAD_UNLIKELY(
-                tx.type != TransactionType::legacy &&
-                tx.type != TransactionType::eip2930 &&
-                tx.type != TransactionType::eip1559 &&
-                tx.type != TransactionType::eip4844)) {
+
+    // EIP-7702
+    // TODO: convert to traits::eip_7702_active()
+    if constexpr (!(traits::evm_rev() >= EVMC_PRAGUE)) {
+        if (MONAD_UNLIKELY(tx.type == TransactionType::eip7702)) {
             return TransactionError::TypeNotSupported;
         }
     }
-    else if (MONAD_UNLIKELY(
-                 tx.type != TransactionType::legacy &&
-                 tx.type != TransactionType::eip2930 &&
-                 tx.type != TransactionType::eip1559 &&
-                 tx.type != TransactionType::eip4844 &&
-                 tx.type != TransactionType::eip7702)) {
+
+    // catch all
+    if (MONAD_UNLIKELY(
+            tx.type != TransactionType::legacy &&
+            tx.type != TransactionType::eip2930 &&
+            tx.type != TransactionType::eip1559 &&
+            tx.type != TransactionType::eip4844 &&
+            tx.type != TransactionType::eip7702)) {
         return TransactionError::TypeNotSupported;
     }
 
@@ -163,7 +164,7 @@ Result<void> static_validate_transaction(
         return TransactionError::InvalidSignature;
     }
 
-    if constexpr (traits::evm_rev() >= EVMC_CANCUN) {
+    if constexpr (traits::eip_4844_active()) {
         if (tx.type == TransactionType::eip4844) {
             if (MONAD_UNLIKELY(tx.blob_versioned_hashes.empty())) {
                 return TransactionError::InvalidBlobHash;
@@ -196,8 +197,10 @@ Result<void> validate_transaction(
 {
     // YP (70)
     uint512_t v0 = tx.value + max_gas_cost(tx.gas_limit, tx.max_fee_per_gas);
-    if (tx.type == TransactionType::eip4844) {
-        v0 += tx.max_fee_per_blob_gas * get_total_blob_gas(tx);
+    if constexpr (traits::eip_4844_active()) {
+        if (tx.type == TransactionType::eip4844) {
+            v0 += tx.max_fee_per_blob_gas * get_total_blob_gas(tx);
+        }
     }
 
     if (MONAD_UNLIKELY(!sender_account.has_value())) {

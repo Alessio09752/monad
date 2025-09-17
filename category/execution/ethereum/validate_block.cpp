@@ -22,10 +22,10 @@
 #include <category/execution/ethereum/core/block.hpp>
 #include <category/execution/ethereum/core/receipt.hpp>
 #include <category/execution/ethereum/core/rlp/block_rlp.hpp>
-#include <category/vm/evm/explicit_traits.hpp>
-#include <category/vm/evm/switch_traits.hpp>
 #include <category/execution/ethereum/transaction_gas.hpp>
 #include <category/execution/ethereum/validate_block.hpp>
+#include <category/vm/evm/explicit_traits.hpp>
+#include <category/vm/evm/switch_traits.hpp>
 
 #include <evmc/evmc.h>
 
@@ -192,7 +192,7 @@ constexpr Result<void> static_validate_ommers(Block const &block)
 template <Traits traits>
 constexpr Result<void> static_validate_4844(Block const &block)
 {
-    if constexpr (traits::evm_rev() >= EVMC_CANCUN) {
+    if constexpr (traits::eip_4844_active()) {
         uint64_t blob_gas_used = 0;
         for (auto const &tx : block.transactions) {
             if (tx.type == TransactionType::eip4844) {
