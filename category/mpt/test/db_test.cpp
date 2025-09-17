@@ -1005,7 +1005,7 @@ TEST_F(OnDiskDbWithFileAsyncFixture, async_get_node_then_async_traverse)
             }
             else {
                 traverse_sender.traverse_root =
-                    copy_node<Node>(res.assume_value().get());
+                    NodeCursor{copy_node<Node>(res.assume_value().get())};
                 // issue async traverse
                 auto *traverse_state = new auto(monad::async::connect(
                     std::move(traverse_sender), TraverseReceiver{result}));

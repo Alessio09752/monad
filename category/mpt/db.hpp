@@ -103,11 +103,6 @@ public:
     Db &operator=(Db &&) = delete;
     ~Db();
 
-    // The find, get, and get_data API calls return non-owning references.
-    // The result lifetime ends when a subsequent operation reloads the trie
-    // root. This can happen due to an RWDb upsert, an RODb reading a different
-    // version, or an RODb reading the same version that has been updated by an
-    // RWDb in another process.
     // The `block_id` parameter specify the version to read from, and is also
     // used for version control validation. These calls may wait on a fiber
     // future.
@@ -251,14 +246,14 @@ namespace detail
 }
 
 inline detail::TraverseSender make_traverse_sender(
-    AsyncContext *const context, Node::UniquePtr traverse_root,
+    AsyncContext *const context, NodeCursor traverse_root,
     std::unique_ptr<TraverseMachine> machine, uint64_t const block_id,
     size_t const concurrency_limit = 4096)
 {
     MONAD_ASSERT(context);
     return {
         context->aux,
-        std::move(traverse_root),
+        traverse_root,
         std::move(machine),
         block_id,
         concurrency_limit};

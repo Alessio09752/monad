@@ -57,18 +57,19 @@ namespace detail
 
     void async_parallel_preorder_traverse_init(
         TraverseSender &, async::erased_connected_operation *traverse_state,
-        Node const &);
+        Node &);
 
     void async_parallel_preorder_traverse_impl(
         TraverseSender &sender,
-        async::erased_connected_operation *traverse_state, Node const &node,
+        async::erased_connected_operation *traverse_state, Node &node,
         TraverseMachine &machine, unsigned char const branch);
 
     // current implementation does not contaminate triedb node caching
     inline bool preorder_traverse_blocking_impl(
-        UpdateAuxImpl &aux, unsigned char const branch, Node const &node,
+        UpdateAuxImpl &aux, unsigned char const branch, NodeCursor root,
         TraverseMachine &traverse, uint64_t const version)
     {
+        Node &node = *root.node;
         ++traverse.level;
         if (!traverse.down(branch, node)) {
             --traverse.level;
@@ -76,18 +77,18 @@ namespace detail
         }
         for (auto const [idx, branch] : NodeChildrenRange(node.mask)) {
             if (traverse.should_visit(node, branch)) {
-                auto const *const next = node.next(idx);
+                auto next = node.shared_next(idx);
                 if (next) {
                     preorder_traverse_blocking_impl(
-                        aux, branch, *next, traverse, version);
+                        aux, branch, next, traverse, version);
                     continue;
                 }
                 MONAD_ASSERT(aux.is_on_disk());
-                Node::UniquePtr next_node_ondisk =
+                Node::SharedPtr next_node_ondisk =
                     read_node_blocking(aux, node.fnext(idx), version);
                 if (!next_node_ondisk ||
                     !preorder_traverse_blocking_impl(
-                        aux, branch, *next_node_ondisk, traverse, version)) {
+                        aux, branch, next_node_ondisk, traverse, version)) {
                     return false;
                 }
             }
@@ -194,7 +195,7 @@ namespace detail
         using result_type = async::result<bool>;
 
         UpdateAuxImpl &aux;
-        Node::UniquePtr traverse_root;
+        NodeCursor traverse_root;
         std::unique_ptr<TraverseMachine> machine;
         uint64_t const version;
         size_t const max_outstanding_reads;
@@ -207,7 +208,7 @@ namespace detail
         bool version_expired_before_complete{false};
 
         TraverseSender(
-            UpdateAuxImpl &aux, Node::UniquePtr traverse_root,
+            UpdateAuxImpl &aux, NodeCursor traverse_root,
             std::unique_ptr<TraverseMachine> machine, uint64_t const version,
             size_t const concurrency_limit)
             : aux(aux)
@@ -221,9 +222,9 @@ namespace detail
         async::result<void>
         operator()(async::erased_connected_operation *traverse_state) noexcept
         {
-            MONAD_ASSERT(traverse_root != nullptr);
+            MONAD_ASSERT(traverse_root.is_valid());
             async_parallel_preorder_traverse_init(
-                *this, traverse_state, *traverse_root);
+                *this, traverse_state, *traverse_root.node);
             return async::success();
         }
 
@@ -264,7 +265,7 @@ namespace detail
 
     inline void async_parallel_preorder_traverse_init(
         TraverseSender &sender,
-        async::erased_connected_operation *traverse_state, Node const &node)
+        async::erased_connected_operation *traverse_state, Node &node)
     {
         sender.within_recursion_count++;
         async_parallel_preorder_traverse_impl(
@@ -281,7 +282,7 @@ namespace detail
 
     inline void async_parallel_preorder_traverse_impl(
         TraverseSender &sender,
-        async::erased_connected_operation *traverse_state, Node const &node,
+        async::erased_connected_operation *traverse_state, Node &node,
         TraverseMachine &machine, unsigned char const branch)
     {
         // How many children are considered left side for depth first preference
@@ -301,7 +302,7 @@ namespace detail
         unsigned children_read = 0;
         for (auto const [idx, branch] : NodeChildrenRange(node.mask)) {
             if (machine.should_visit(node, branch)) {
-                auto const *const next = node.next(idx);
+                auto next = node.shared_next(idx);
                 if (next == nullptr) {
                     MONAD_ASSERT(sender.aux.is_on_disk());
                     // verify version before read
@@ -358,20 +359,22 @@ namespace detail
                 }
             }
         }
+        --machine.level;
+        machine.up(branch, node);
     }
 }
 
 // return value indicates if we have done the full traversal or not
 inline bool preorder_traverse_blocking(
-    UpdateAuxImpl &aux, Node const &node, TraverseMachine &traverse,
+    UpdateAuxImpl &aux, NodeCursor root_cursor, TraverseMachine &traverse,
     uint64_t const version)
 {
     return detail::preorder_traverse_blocking_impl(
-        aux, INVALID_BRANCH, node, traverse, version);
+        aux, INVALID_BRANCH, root_cursor, traverse, version);
 }
 
 inline bool preorder_traverse_ondisk(
-    UpdateAuxImpl &aux, Node const &node, TraverseMachine &machine,
+    UpdateAuxImpl &aux, NodeCursor root_cursor, TraverseMachine &machine,
     uint64_t const version, size_t const concurrency_limit = 4096)
 {
     MONAD_ASSERT(aux.is_on_disk());
@@ -402,11 +405,7 @@ inline bool preorder_traverse_ondisk(
 
     auto *const state = new auto(async::connect(
         detail::TraverseSender(
-            aux,
-            copy_node<Node>(&node),
-            machine.clone(),
-            version,
-            concurrency_limit),
+            aux, root_cursor.node, machine.clone(), version, concurrency_limit),
         TraverseReceiver{version_expired_before_traverse_complete}));
     state->initiate();
 

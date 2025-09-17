@@ -159,7 +159,7 @@ TEST_F(OnDiskMerkleTrieGTest, recursively_verify_versions)
         // Must traverse in order
         preorder_traverse_blocking(
             this->aux,
-            *this->root,
+            this->root,
             traverse,
             this->aux.db_history_max_version());
         EXPECT_EQ(traverse.records.empty(), true);
@@ -202,7 +202,7 @@ TEST_F(OnDiskMerkleTrieGTest, recursively_verify_versions)
         // Must traverse in order
         preorder_traverse_blocking(
             this->aux,
-            *this->root,
+            this->root,
             traverse,
             this->aux.db_history_max_version());
         EXPECT_EQ(traverse.records.empty(), true);

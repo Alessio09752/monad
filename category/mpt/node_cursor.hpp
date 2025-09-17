@@ -23,7 +23,7 @@ MONAD_MPT_NAMESPACE_BEGIN
 
 struct NodeCursor
 {
-    Node *node{nullptr};
+    Node::SharedPtr node{nullptr};
     unsigned prefix_index{0};
 
     constexpr NodeCursor()
@@ -32,8 +32,8 @@ struct NodeCursor
     {
     }
 
-    constexpr NodeCursor(Node &node_, unsigned prefix_index_ = 0)
-        : node{&node_}
+    constexpr NodeCursor(Node::SharedPtr node_, unsigned prefix_index_ = 0)
+        : node{std::move(node_)}
         , prefix_index{prefix_index_}
     {
     }
@@ -44,9 +44,8 @@ struct NodeCursor
     }
 };
 
-static_assert(sizeof(NodeCursor) == 16);
+static_assert(sizeof(NodeCursor) == 24);
 static_assert(alignof(NodeCursor) == 8);
-static_assert(std::is_trivially_copyable_v<NodeCursor> == true);
 
 struct OwningNodeCursor
 {
